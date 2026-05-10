@@ -52,13 +52,25 @@ If your team already runs a daily anomaly-review dashboard (e.g. the output of
 the old algorithm), labeling exactly those items is far more useful than random
 sampling — they are the cases your team actually triages.
 
+Define the dashboard once in `config.yml` under `view_sources`:
+
+```yaml
+view_sources:
+  zb10:
+    type: zabbix_dashboard
+    dashboard_name: abnormal_check
+    api_url: "{{ ZABBIX_PSQL_API_URL }}"
+    user:     "{{ ZABBIX_PSQL_API_USER }}"
+    password: "{{ ZABBIX_PSQL_API_PASSWORD }}"
+    data_source_name: zb10        # links to data_sources.zb10 for DB access
+```
+
+Then export:
+
 ```bash
 uv run anomdec-export-dashboard \
     -c config.yml \
-    --source production \
-    --api-url http://zabbix/api_jsonrpc.php \
-    --user Admin --password secret \
-    --dashboard-name daily_anomaly_review \
+    --view-source zb10 \
     --output datasets/dashboard_$(date +%Y%m%d)/psql
 ```
 

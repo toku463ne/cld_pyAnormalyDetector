@@ -99,3 +99,15 @@ clustering:
 #     password: "{{ ZABBIX_DB_PASSWORD }}"
 #     dbname: zabbix
 #     api_url: "http://zabbix.example.com"
+
+##################################################
+#  view_sources: external views (e.g. Zabbix dashboards) used by tools
+##################################################
+# view_sources:
+#   zb10:
+#     type: zabbix_dashboard
+#     dashboard_name: abnormal_check
+#     api_url: "{{ ZABBIX_PSQL_API_URL }}"
+#     user:     "{{ ZABBIX_PSQL_API_USER }}"
+#     password: "{{ ZABBIX_PSQL_API_PASSWORD }}"
+#     data_source_name: zb10        # which data_sources entry to pull DB from

@@ -25,11 +25,20 @@ Usage
 -----
   uv run anomdec-export-dashboard \\
       -c config.yml \\
-      --source production \\
-      --api-url http://zabbix/api_jsonrpc.php \\
-      --user Admin --password secret \\
-      --dashboard-name daily_anomaly_review \\
+      --view-source zb10 \\
       --output datasets/dashboard_$(date +%Y%m%d)/psql
+
+The view-source entry in config.yml supplies the Zabbix API URL/credentials,
+the dashboard name to read, and the linked data_source for DB access:
+
+  view_sources:
+    zb10:
+      type: zabbix_dashboard
+      dashboard_name: abnormal_check
+      api_url: "{{ ZABBIX_PSQL_API_URL }}"
+      user:     "{{ ZABBIX_PSQL_API_USER }}"
+      password: "{{ ZABBIX_PSQL_API_PASSWORD }}"
+      data_source_name: zb10
 """
 from __future__ import annotations
 import argparse
@@ -218,11 +227,7 @@ def main() -> None:
         description="Export history/trends for every item in a Zabbix dashboard"
     )
     parser.add_argument("-c", "--config", required=True, help="Config YAML file")
-    parser.add_argument("--source", required=True, help="Data source name in config (DB)")
-    parser.add_argument("--api-url", required=True, help="Zabbix API URL")
-    parser.add_argument("--user", required=True, help="Zabbix API username")
-    parser.add_argument("--password", required=True, help="Zabbix API password")
-    parser.add_argument("--dashboard-name", required=True, help="Dashboard name to read")
+    parser.add_argument("--view-source", required=True, help="view_sources entry in config")
     parser.add_argument("--output", required=True, help="Output directory for CSV files")
     parser.add_argument("--end", type=int, default=0, help="End epoch (default: now)")
     args = parser.parse_args()
@@ -230,25 +235,33 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     cfg = load_config(args.config)
-    if args.source not in cfg.data_sources:
+    if args.view_source not in cfg.view_sources:
         raise SystemExit(
-            f"Source '{args.source}' not in config. Available: {list(cfg.data_sources)}"
+            f"view_source '{args.view_source}' not in config. "
+            f"Available: {list(cfg.view_sources)}"
         )
-    ds_cfg = cfg.data_sources[args.source]
+    vs_cfg = cfg.view_sources[args.view_source]
 
-    logger.info("Connecting to Zabbix API at %s", args.api_url)
-    zapi = _ZabbixAPI(args.api_url, args.user, args.password)
+    if vs_cfg.data_source_name not in cfg.data_sources:
+        raise SystemExit(
+            f"view_sources.{args.view_source}.data_source_name='{vs_cfg.data_source_name}' "
+            f"is not in data_sources. Available: {list(cfg.data_sources)}"
+        )
+    ds_cfg = cfg.data_sources[vs_cfg.data_source_name]
+
+    logger.info("Connecting to Zabbix API at %s", vs_cfg.api_url)
+    zapi = _ZabbixAPI(vs_cfg.api_url, vs_cfg.user, vs_cfg.password)
     logger.info("Zabbix API version: %s", zapi.api_version())
 
-    dashboard = zapi.get_dashboard(args.dashboard_name)
+    dashboard = zapi.get_dashboard(vs_cfg.dashboard_name)
     if not dashboard:
-        raise SystemExit(f"Dashboard not found: {args.dashboard_name}")
+        raise SystemExit(f"Dashboard not found: {vs_cfg.dashboard_name}")
 
     widgets = _widgets_in_dashboard(dashboard)
     item_ids, graph_ids = _extract_item_and_graph_ids(widgets)
     logger.info(
         "Dashboard '%s' — pages=%d widgets=%d direct_items=%d graphs=%d",
-        args.dashboard_name,
+        vs_cfg.dashboard_name,
         len(dashboard.get("pages") or []),
         len(widgets),
         len(item_ids),

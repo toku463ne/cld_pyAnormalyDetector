@@ -126,9 +126,35 @@ class DataSourceConfig(BaseModel):
         return self
 
 
+class ViewSourceConfig(BaseModel):
+    """A read-only view onto an external system (e.g. a Zabbix dashboard).
+
+    Used by tools that need API access to inspect what a human reviewer sees,
+    e.g. exporting every item shown on the daily anomaly-review dashboard.
+    """
+    type: Literal["zabbix_dashboard"]
+    dashboard_name: str = ""
+    api_url: str = ""
+    user: str = ""
+    password: str = ""
+    data_source_name: str = ""  # key into data_sources for the underlying DB
+
+    @model_validator(mode="after")
+    def check_required_fields(self) -> ViewSourceConfig:
+        if self.type == "zabbix_dashboard":
+            missing = [
+                f for f in ("dashboard_name", "api_url", "user", "data_source_name")
+                if not getattr(self, f)
+            ]
+            if missing:
+                raise ValueError(f"type={self.type} requires: {missing}")
+        return self
+
+
 class AppConfig(BaseModel):
     admdb: AdmDbConfig
     data_sources: dict[str, DataSourceConfig] = {}
+    view_sources: dict[str, ViewSourceConfig] = {}
     logging: LoggingConfig = LoggingConfig()
 
     # Top-level defaults that cascade into data_sources
