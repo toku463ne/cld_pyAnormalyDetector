@@ -87,9 +87,11 @@ class ZabbixAPI:
 
     # ---- dashboard ----------------------------------------------------------
     def get_dashboard(self, name: str) -> dict | None:
+        # selectPages: "extend" returns pages with their widgets and fields.
+        # (dashboard.get does not accept a top-level selectWidgets param.)
         results = self._call(
             "dashboard.get",
-            {"filter": {"name": name}, "selectPages": "extend", "selectWidgets": "extend"},
+            {"filter": {"name": name}, "selectPages": "extend"},
         )
         return results[0] if results else None  # type: ignore[index]
 
