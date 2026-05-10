@@ -35,13 +35,27 @@ class ZabbixAPI:
         self._session = requests.Session()
         self._session.proxies = {}      # bypass system proxy
         self._id = 0
-        self._auth = self._login(user, password)
+        # apiinfo.version is unauthenticated, so call it before login.
+        # Used to pick the right login key ('username' on 5.4+, else 'user').
+        self._version = str(self._call("apiinfo.version", {}))
+        token = self._login(user, password)
+        # 5.4+ accepts the Authorization header; 7.2 will require it
+        # (the deprecated 'auth' field in the JSON-RPC payload is being removed).
+        try:
+            major, minor = (int(x) for x in self._version.split(".")[:2])
+        except (ValueError, IndexError):
+            major, minor = 7, 0
+        if (major, minor) >= (5, 4):
+            self._session.headers["Authorization"] = f"Bearer {token}"
+        else:
+            self._auth_token_legacy = token   # injected into payloads for 5.0/5.2
 
-    def _call(self, method: str, params: dict | list, auth: bool = True) -> object:
+    def _call(self, method: str, params: dict | list) -> object:
         self._id += 1
         payload: dict = {"jsonrpc": "2.0", "method": method, "params": params, "id": self._id}
-        if auth and self._auth:
-            payload["auth"] = self._auth
+        legacy = getattr(self, "_auth_token_legacy", None)
+        if legacy:
+            payload["auth"] = legacy
         resp = self._session.post(self._url, json=payload, timeout=self._timeout)
         resp.raise_for_status()
         try:
@@ -61,10 +75,15 @@ class ZabbixAPI:
         return data["result"]
 
     def _login(self, user: str, password: str) -> str:
-        return str(self._call("user.login", {"user": user, "password": password}, auth=False))
+        try:
+            major, minor = (int(x) for x in self._version.split(".")[:2])
+        except (ValueError, IndexError):
+            major, minor = 7, 0
+        key = "username" if (major, minor) >= (5, 2) else "user"
+        return str(self._call("user.login", {key: user, "password": password}))
 
     def api_version(self) -> str:
-        return str(self._call("apiinfo.version", {}, auth=False))
+        return self._version
 
     # ---- dashboard ----------------------------------------------------------
     def get_dashboard(self, name: str) -> dict | None:
