@@ -1,0 +1,46 @@
+admdb:
+  host: '{{ ADM_DB_HOST }}'
+  user: anomdec
+  password: '{{ ADM_DB_PASSWORD }}'
+  dbname: '{{ ADM_DB_DB_NAME }}'
+  port: 5432
+  schema: '{{ ADM_DB_SCHEMA }}'
+
+logging:
+  enabled: true
+  level: INFO
+  format: "%(asctime)s %(name)s %(levelname)s | %(message)s"
+  file: "logan.log"
+  log_dir: "{{ HOME }}/anomdec/logs"
+
+data_sources:
+  logan:
+    type: "logan"
+    name: "logan"
+    base_url: '{{ LOGAN_BASE_URL }}'
+    minimal_group_size: 1000
+    data_dir: "{{ HOME }}/anomdec/logandata"
+    groups:
+      firewall: 
+        1: IMTFW001
+        2: NFPFW003
+      proxy:
+        3: SOPHOS-01
+        4: pfsense67051_openvpn
+    trends_interval: 7200
+
+view_sources:
+  logan:
+    type: "logan"
+    name: "logan"
+    port: 5000
+    chart_categories:
+      bycluster:
+        name: "By Cluster"
+        one_item_per_host: false
+    layout:
+      chart_width: 400
+      chart_height: 300
+      max_vertical_charts: 4
+      max_horizontal_charts: 3
+

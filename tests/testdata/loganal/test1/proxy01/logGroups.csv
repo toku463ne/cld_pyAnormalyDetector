@@ -1,0 +1,21 @@
+groupId,count,score,text
+174346710600004,3366,0.00,AEAD Decrypt error: cipher final failed
+174346584800001,570,5.18,AEAD Decrypt error: bad packet ID (may be a replay): [ * ] -- see the man page entry for --no-replay and --replay-window for more info or silence this warning with --mute-replay-warnings
+174344781200001,549,5.69,user '*' authenticated
+174344781300003,535,5.44,NOTE: Beginning empirical MTU test -- results should be available in * to * minutes.
+174344781200002,501,5.60,[*] Peer Connection Initiated with [AF_INET]*:*
+174344804300007,440,5.93,"[*] Inactivity timeout (--ping-restart), restarting"
+174344799600006,422,5.65,"NOTE: Empirical MTU test completed [Tried,Actual] local->remote=[*,*] remote->local=[*,*]"
+174344787700005,210,5.85,"WARNING: 'cipher' is present in local config but missing in remote config, local='cipher AES-128-CBC'"
+174346671900002,34,0.00,user 'tina' authenticated
+174346671900003,34,0.00,[tina] Peer Connection Initiated with [AF_INET]*:*
+174346169200001,34,7.25,NOTE: This connection is unable to accommodate a UDP packet size of 1521. Consider using --fragment or --mssfix options as a workaround.
+174346225000001,16,0.00,NOTE: failed to empirically measure MTU (requires OpenVPN * or higher at other end of connection).
+174346827900005,16,0.00,"[tina] Inactivity timeout (--ping-restart), restarting"
+174344787700004,12,0.00,"WARNING: 'link-mtu' is used inconsistently, local='link-mtu *', remote='link-mtu *'"
+174345185700001,4,0.00,TLS Error: TLS key negotiation failed to occur within * seconds (check your network connectivity)
+174345185700002,4,0.00,TLS Error: TLS * failed
+174346513200002,4,0.00,user 'christian' authenticated
+174416922200002,4,0.00,WARNING: Failed running command (--auth-user-pass-verify): external program exited with error status: *
+174416922200003,4,0.00,TLS Auth Error: Auth Username/Password verification failed for peer
+174605292200001,4,0.00,user 'toyoji' * * authenticate.

@@ -1,0 +1,21 @@
+groupId,lastUpdate,count,score,text
+174346710600004,2025-05-01 21:34:02,3366,0.000,May  1 00:00:21 10.0.67.51 openvpn[12781]: AEAD Decrypt error: cipher final failed
+174346584800001,2025-05-02 09:37:34,570,5.180,May  2 09:37:34 10.0.67.51 openvpn[12781]: tina/126.166.255.155:48654 AEAD Decrypt error: bad packet ID (may be a replay): [ #13311 ] -- see the man page entry for --no-replay and --replay-window for more info or silence this warning with --mute-replay-warnings
+174344781200001,2025-05-02 09:38:33,549,5.693,May  2 09:38:33 10.0.67.51 openvpn: user 'nguyen' authenticated
+174344781300003,2025-05-02 09:38:35,535,5.439,May  2 09:38:35 10.0.67.51 openvpn[12781]: nguyen/1.55.84.49:1194 NOTE: Beginning empirical MTU test -- results should be available in 3 to 4 minutes.
+174344781200002,2025-05-02 09:38:33,501,5.595,May  2 09:38:33 10.0.67.51 openvpn[12781]: 1.55.84.49:1194 [nguyen] Peer Connection Initiated with [AF_INET]1.55.84.49:1194
+174344804300007,2025-05-02 09:36:52,440,5.933,"May  2 09:36:52 10.0.67.51 openvpn[12781]: todoroki/1.72.3.167:58586 [todoroki] Inactivity timeout (--ping-restart), restarting"
+174344799600006,2025-05-02 09:32:21,422,5.649,"May  2 09:32:21 10.0.67.51 openvpn[12781]: msouza/177.36.5.192:1194 NOTE: Empirical MTU test completed [Tried,Actual] local->remote=[1521,1521] remote->local=[1524,1524]"
+174344787700005,2025-05-02 09:26:55,210,5.849,"May  2 09:26:55 10.0.67.51 openvpn[12781]: 150.31.40.133:60562 WARNING: 'cipher' is present in local config but missing in remote config, local='cipher AES-128-CBC'"
+174346671900002,2025-05-01 13:03:59,34,0.000,Apr 30 16:24:02 10.0.67.51 openvpn: user 'tina' authenticated
+174346671900003,2025-05-01 13:03:59,34,0.000,Apr 30 16:24:02 10.0.67.51 openvpn[12781]: 126.157.204.249:26846 [tina] Peer Connection Initiated with [AF_INET]126.157.204.249:26846
+174346169200001,2025-05-02 08:45:31,34,7.249,May  2 08:45:31 10.0.67.51 openvpn[12781]: yushin/180.21.144.111:1194 NOTE: This connection is unable to accommodate a UDP packet size of 1521. Consider using --fragment or --mssfix options as a workaround.
+174346225000001,2025-05-01 22:17:46,16,0.000,Apr 30 18:31:25 10.0.67.51 openvpn[12781]: leesang/111.98.94.209:1194 NOTE: failed to empirically measure MTU (requires OpenVPN 1.5 or higher at other end of connection).
+174346827900005,2025-05-01 13:30:39,16,0.000,"Apr 30 20:18:30 10.0.67.51 openvpn[12781]: tina/126.157.204.249:26846 [tina] Inactivity timeout (--ping-restart), restarting"
+174344787700004,2025-05-02 08:19:14,12,0.000,"May  2 08:19:14 10.0.67.51 openvpn[12781]: 27.49.15.13:64373 WARNING: 'link-mtu' is used inconsistently, local='link-mtu 1557', remote='link-mtu 1560'"
+174345185700001,2025-05-01 21:46:48,4,0.000,May  1 21:46:48 10.0.67.51 openvpn[12781]: 61.87.42.244:1194 TLS Error: TLS key negotiation failed to occur within 60 seconds (check your network connectivity)
+174345185700002,2025-05-01 21:46:48,4,0.000,May  1 21:46:48 10.0.67.51 openvpn[12781]: 61.87.42.244:1194 TLS Error: TLS handshake failed
+174346513200002,2025-05-01 11:32:29,4,0.000,May  1 11:32:29 10.0.67.51 openvpn: user 'christian' authenticated
+174416922200002,2025-05-01 07:42:24,4,0.000,May  1 07:42:24 10.0.67.51 openvpn[12781]: 125.30.74.62:1194 WARNING: Failed running command (--auth-user-pass-verify): external program exited with error status: 1
+174416922200003,2025-05-01 07:42:24,4,0.000,May  1 07:42:24 10.0.67.51 openvpn[12781]: 125.30.74.62:1194 TLS Auth Error: Auth Username/Password verification failed for peer
+174605292200001,2025-05-01 07:42:24,4,0.000,May  1 07:42:24 10.0.67.51 openvpn: user 'toyoji' could not authenticate.

@@ -1,0 +1,101 @@
+##################################################
+#  Logging
+##################################################
+logging:
+  enabled: false
+  level: INFO
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  log_dir: "{{ HOME }}/anomdec/logs"
+  file: "anomdec.log"
+
+##################################################
+#  admdb
+##################################################
+admdb:
+  host: "{{ ADM_DB_HOST | default('localhost') }}"
+  port: 5432
+  user: anomdec
+  password: "{{ ADM_DB_PASSWORD | default('') }}"
+  dbname: anomdec
+  schema: public
+
+##################################################
+#  data collection params (cascaded to data_sources)
+##################################################
+batch_size: 100
+history_interval: 600        # seconds per history record
+history_retention: 18        # keep last N history records (~3h)
+trends_retention: 14         # days of trends to retain for stats
+anomaly_keep_secs: 86400     # keep anomalies for 1 day
+
+##################################################
+#  detectors (cascaded to data_sources)
+##################################################
+detectors:
+  zscore:
+    enabled: true
+    weight: 0.3
+    lambda_threshold: 3.0
+    min_ignore_rate: 0.05    # ignore if |h_mean - t_mean| / t_mean < this
+  changepoint:
+    enabled: true
+    weight: 0.3
+    cusum_h: 5.0             # decision threshold (in units of std)
+    cusum_k: 0.5             # slack (in units of std)
+  seasonal:
+    enabled: true
+    weight: 0.4
+    lambda_threshold: 3.0
+
+ensemble:
+  min_score: 0.5
+  require_any: 1             # at least N detectors must contribute
+
+##################################################
+#  clustering (cascaded to data_sources)
+##################################################
+clustering:
+  jaccard_eps: 0.1
+  corr_eps: 0.2
+  min_samples: 2
+  sigma: 2.0
+  detection_period: 43200    # seconds of history used for clustering
+
+##################################################
+#  item / anomaly filters (cascaded to data_sources)
+##################################################
+#  Filters are matched by items.key_ (fnmatch glob) and items.units (exact).
+#  - item_filters    drop items BEFORE detectors run (saves compute)
+#  - anomaly_filters drop scored anomalies whose absolute change is too small
+#                    to matter operationally
+#
+#  Both lists are empty by default. Uncomment and tune for your environment.
+#
+# item_filters:
+#   - name: ignore-zero-load        # never alert when an idle item bumps a bit
+#     key_pattern: "system.cpu.load*"
+#     min_value: 0.5
+#
+# anomaly_filters:
+#   - name: cpu-percent-noise       # 1% CPU change isn't worth checking
+#     units: "%"
+#     min_abs_diff: 10.0
+#   - name: memory-bytes-noise      # only alert if memory moves >= 1 GiB
+#     units: "B"
+#     min_abs_diff: 1073741824
+#   - name: network-bps-noise       # ignore <1 Mbps shifts
+#     units: "bps"
+#     min_abs_diff: 1000000
+
+##################################################
+#  data_sources: define your sources here
+##################################################
+# data_sources:
+#   my_zabbix:
+#     type: zabbix_psql
+#     host: "{{ ZABBIX_DB_HOST }}"
+#     port: 5432
+#     user: zabbix
+#     password: "{{ ZABBIX_DB_PASSWORD }}"
+#     dbname: zabbix
+#     api_url: "http://zabbix.example.com"

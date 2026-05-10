@@ -1,0 +1,45 @@
+{
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.analysis.languageServerMode": "light",
+
+    "files.watcherExclude": {
+        "**/.git/**": true,
+        "**/node_modules/**": true,
+        "**/.venv/**": true,
+        "**/venv/**": true,
+        "**/__pycache__/**": true,
+        "**/.mypy_cache/**": true,
+        "**/results/**": true,
+        "**/logs/**": true,
+        "**/data/**": true
+    },
+
+    "search.exclude": {
+        "**/.git": true,
+        "**/node_modules": true,
+        "**/.venv": true,
+        "**/results": true,
+        "**/logs": true,
+        "**/data": true
+    },
+
+    "python.analysis.exclude": [
+        "**/.venv/**",
+        "**/node_modules/**",
+        "**/results/**",
+        "**/logs/**",
+        "**/data/**"
+    ],
+
+    "python.analysis.indexing": false,
+    "python.analysis.autoImportCompletions": false,
+
+    "files.exclude": {
+        "**/.venv": true,
+        "**/__pycache__": true
+    }
+}
