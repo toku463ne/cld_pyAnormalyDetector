@@ -89,7 +89,7 @@ class LoggingConfig(BaseModel):
 
 
 class DataSourceConfig(BaseModel):
-    type: Literal["zabbix_psql", "zabbix_mysql", "csv", "logan"]
+    type: Literal["zabbix_psql", "csv", "logan"]
 
     # DB-type sources
     host: str = ""
@@ -117,7 +117,7 @@ class DataSourceConfig(BaseModel):
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DataSourceConfig:
-        if self.type in ("zabbix_psql", "zabbix_mysql"):
+        if self.type == "zabbix_psql":
             missing = [f for f in ("host", "user", "dbname") if not getattr(self, f)]
             if missing:
                 raise ValueError(f"type={self.type} requires: {missing}")

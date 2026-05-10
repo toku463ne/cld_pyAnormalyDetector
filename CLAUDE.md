@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-ZabbixのDB（PostgreSQL / MySQL）からhistory/trendsデータを取得し、直近の異常を検出してZabbix DashboardやWeb UIに報告するツール。1時間に1回実行される。
+ZabbixのDB（PostgreSQL）からhistory/trendsデータを取得し、直近の異常を検出してZabbix DashboardやWeb UIに報告するツール。1時間に1回実行される。
 
 ### リファクタリングの目標
 
@@ -374,7 +374,6 @@ def detect(items: List[int]) -> List[AnomalyScore]: ...
 | タイプ | クラス | 説明 |
 |---|---|---|
 | `zabbix_psql` | `ZabbixPsqlSource` | Zabbix PostgreSQL DB |
-| `zabbix_mysql` | `ZabbixMysqlSource` | Zabbix MySQL DB |
 | `csv` | `CsvSource` | テスト用CSVファイル |
 | `logan` | `LoganSource` | goLogAnalyzerのログデータ |
 
