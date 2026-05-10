@@ -102,6 +102,11 @@ class DataSourceConfig(BaseModel):
     # CSV source
     data_dir: str = ""
 
+    # DB connection retry/schema (used by PostgreSqlDB for zabbix_psql)
+    schema_name: str = Field("public", alias="schema")
+    retries: int = 3
+    delay: int = 3
+
     # Collection params (inherit from AppConfig defaults)
     batch_size: int = 100
     history_interval: int = 600
@@ -114,6 +119,8 @@ class DataSourceConfig(BaseModel):
     clustering: ClusteringConfig = ClusteringConfig()
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []
+
+    model_config = {"populate_by_name": True}
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DataSourceConfig:
