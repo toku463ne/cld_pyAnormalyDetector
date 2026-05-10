@@ -93,8 +93,18 @@ Review anomaly data visually and assign labels (anomaly / normal / skip) through
 an interactive Dash app.  Labels are auto-saved to `labels.csv` on every click.
 
 ### Install UI dependencies (one-time)
+The labeling UI needs `dash` + `plotly`, which are kept out of the default
+install so production hosts running `anomdec-detect` don't carry them. Either
+sync them once:
+
 ```bash
 uv sync --extra ui
+```
+
+…or pass `--extra ui` on every `uv run` invocation that launches the UI:
+
+```bash
+uv run --extra ui anomdec-label --dataset <path>
 ```
 
 ### Launch the UI
