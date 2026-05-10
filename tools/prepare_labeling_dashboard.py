@@ -36,7 +36,8 @@ import logging
 from pathlib import Path
 
 import pandas as pd
-import requests
+
+from tools._zabbix import ZabbixAPI
 
 logger = logging.getLogger(__name__)
 
@@ -48,50 +49,6 @@ _NCOLS = 4
 _NROWS = 12          # max rows per page before wrapping to a new page
 _WIDGET_W = 16
 _WIDGET_H = 5
-
-
-# ---------------------------------------------------------------------------
-# Minimal Zabbix JSON-RPC client (no third-party dependency)
-# ---------------------------------------------------------------------------
-
-class _ZabbixAPI:
-    def __init__(self, url: str, user: str, password: str):
-        self._url = url
-        self._session = requests.Session()
-        self._session.proxies = {}      # bypass system proxy
-        self._id = 0
-        self._auth = self._login(user, password)
-
-    def _call(self, method: str, params: dict | list, auth: bool = True) -> object:
-        self._id += 1
-        payload: dict = {"jsonrpc": "2.0", "method": method, "params": params, "id": self._id}
-        if auth and self._auth:
-            payload["auth"] = self._auth
-        resp = self._session.post(self._url, json=payload, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"Zabbix API [{method}] error: {data['error']}")
-        return data["result"]
-
-    def _login(self, user: str, password: str) -> str:
-        return str(self._call("user.login", {"user": user, "password": password}, auth=False))
-
-    def api_version(self) -> str:
-        return str(self._call("apiinfo.version", {}, auth=False))
-
-    def get_dashboard(self, name: str) -> dict | None:
-        results = self._call("dashboard.get", {"filter": {"name": name}, "selectPages": "extend"})
-        return results[0] if results else None  # type: ignore[index]
-
-    def delete_dashboard(self, dashboardid: str) -> None:
-        self._call("dashboard.delete", [dashboardid])
-
-    def create_dashboard(self, name: str, pages: list[dict]) -> None:
-        self._call("dashboard.create", {"name": name, "pages": pages})
-
-    def update_dashboard(self, dashboardid: str, pages: list[dict]) -> None:
-        self._call("dashboard.update", {"dashboardid": dashboardid, "pages": pages})
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +147,7 @@ def main() -> None:
 
     logger.info("Connecting to Zabbix API at %s", args.api_url)
     try:
-        zapi = _ZabbixAPI(args.api_url, args.user, args.password)
+        zapi = ZabbixAPI(args.api_url, args.user, args.password)
         version = zapi.api_version()
         logger.info("Zabbix API version: %s", version)
     except Exception as e:

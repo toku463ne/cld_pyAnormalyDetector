@@ -47,56 +47,13 @@ import time
 from pathlib import Path
 
 import pandas as pd
-import requests
 
 from config.loader import load_config
 from config.schema import DataSourceConfig
 from ingestion.factory import get_data_source
+from tools._zabbix import ZabbixAPI
 
 logger = logging.getLogger(__name__)
-
-
-class _ZabbixAPI:
-    def __init__(self, url: str, user: str, password: str):
-        self._url = url
-        self._session = requests.Session()
-        self._session.proxies = {}
-        self._id = 0
-        self._auth = self._login(user, password)
-
-    def _call(self, method: str, params: dict | list, auth: bool = True) -> object:
-        self._id += 1
-        payload: dict = {"jsonrpc": "2.0", "method": method, "params": params, "id": self._id}
-        if auth and self._auth:
-            payload["auth"] = self._auth
-        resp = self._session.post(self._url, json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"Zabbix API [{method}] error: {data['error']}")
-        return data["result"]
-
-    def _login(self, user: str, password: str) -> str:
-        return str(self._call("user.login", {"user": user, "password": password}, auth=False))
-
-    def api_version(self) -> str:
-        return str(self._call("apiinfo.version", {}, auth=False))
-
-    def get_dashboard(self, name: str) -> dict | None:
-        results = self._call(
-            "dashboard.get",
-            {"filter": {"name": name}, "selectPages": "extend", "selectWidgets": "extend"},
-        )
-        return results[0] if results else None  # type: ignore[index]
-
-    def get_graph_items(self, graphids: list[int]) -> list[int]:
-        if not graphids:
-            return []
-        results = self._call(
-            "graphitem.get",
-            {"graphids": [int(g) for g in graphids], "output": ["itemid"]},
-        )
-        return [int(r["itemid"]) for r in results]  # type: ignore[index]
 
 
 def _widgets_in_dashboard(dashboard: dict) -> list[dict]:
@@ -250,7 +207,7 @@ def main() -> None:
     ds_cfg = cfg.data_sources[vs_cfg.data_source_name]
 
     logger.info("Connecting to Zabbix API at %s", vs_cfg.api_url)
-    zapi = _ZabbixAPI(vs_cfg.api_url, vs_cfg.user, vs_cfg.password)
+    zapi = ZabbixAPI(vs_cfg.api_url, vs_cfg.user, vs_cfg.password)
     logger.info("Zabbix API version: %s", zapi.api_version())
 
     dashboard = zapi.get_dashboard(vs_cfg.dashboard_name)
