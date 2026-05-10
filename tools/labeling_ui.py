@@ -2,7 +2,8 @@
 Anomaly Labeling UI (Dash)
 
 Loads CSV data from a dataset directory and presents interactive charts so
-you can label each item as anomaly / normal / skip.  Charts are rendered
+you can label each item as anomaly / normal / skip, **and** assign anomaly
+items to an "incident" (your ground-truth cluster).  Charts are rendered
 client-side (Plotly JS), so only the label badge updates on each button click
 — no full-page rerenders.
 
@@ -28,18 +29,22 @@ Dataset directory files
 
 Output
 ------
-  labels.csv in the dataset directory (auto-saved on every click)
-  item_id, label, note   (label: 1=anomaly  0=normal  -1=skip)
+  labels.csv in the dataset directory (auto-saved on every change)
+  item_id, label, note, incident
+    label:    1=anomaly  0=normal  -1=skip
+    incident: free-text incident name (same string = same root cause).
+              Only meaningful when label==1; cleared automatically otherwise.
+              Used by evaluation to compute clustering quality (ARI etc.)
+              against the detector's clusterid.
 """
 from __future__ import annotations
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, State, callback_context, dcc, html, no_update, ALL, MATCH
+from dash import Dash, Input, Output, State, callback_context, dcc, html, ALL, MATCH
 from dash.exceptions import PreventUpdate
 
 logger = logging.getLogger(__name__)
@@ -109,7 +114,6 @@ def load_dataset(data_dir: str) -> dict:
 
     endep = int((d / "endep.txt").read_text().strip()) if (d / "endep.txt").exists() else 0
 
-    # Build item summary: one row per itemid
     summary = _build_summary(anom, items, scores, hist["itemid"].unique().tolist())
 
     return {
@@ -125,7 +129,6 @@ def load_dataset(data_dir: str) -> dict:
 def _build_summary(anom: pd.DataFrame, items: pd.DataFrame,
                    scores: pd.DataFrame, all_ids: list[int]) -> pd.DataFrame:
     rows = []
-    # Items in anomalies.csv
     if not anom.empty:
         for iid, g in anom.groupby("itemid"):
             latest = g.sort_values("created").iloc[-1]
@@ -143,7 +146,6 @@ def _build_summary(anom: pd.DataFrame, items: pd.DataFrame,
 
     anom_ids = {r["itemid"] for r in rows}
 
-    # Items only in history (normal candidates from sample_prod.py)
     extra_ids = [i for i in all_ids if i not in anom_ids]
     if extra_ids and not items.empty:
         meta = items[items["itemid"].isin(extra_ids)].drop_duplicates("itemid")
@@ -177,20 +179,58 @@ def _build_summary(anom: pd.DataFrame, items: pd.DataFrame,
 
 # ── label persistence ─────────────────────────────────────────────────────────
 
-def load_labels(data_dir: str) -> dict[str, int]:
+def _normalize_entry(v) -> dict:
+    """Coerce legacy int values into the {label, incident} dict shape."""
+    if isinstance(v, dict):
+        return {"label": int(v.get("label", -1)),
+                "incident": str(v.get("incident", "") or "").strip()}
+    if isinstance(v, int):
+        return {"label": v, "incident": ""}
+    return {"label": -1, "incident": ""}
+
+
+def load_labels(data_dir: str) -> dict[str, dict]:
     p = Path(data_dir) / "labels.csv"
     if not p.exists():
         return {}
     df = pd.read_csv(p)
     df.columns = df.columns.str.strip()
-    return {str(int(r.item_id)): int(r.label) for r in df.itertuples()}
+    has_incident = "incident" in df.columns
+    out: dict[str, dict] = {}
+    for r in df.itertuples():
+        iid = str(int(r.item_id))
+        incident = ""
+        if has_incident:
+            raw = getattr(r, "incident", "")
+            incident = "" if pd.isna(raw) else str(raw).strip()
+        out[iid] = {"label": int(r.label), "incident": incident}
+    return out
 
 
-def save_labels(data_dir: str, labels: dict[str, int]) -> None:
-    rows = [{"item_id": k, "label": v,
-             "note": {1: "anomaly", 0: "normal", -1: "skip"}.get(v, "")}
-            for k, v in labels.items()]
-    pd.DataFrame(rows).to_csv(Path(data_dir) / "labels.csv", index=False)
+def save_labels(data_dir: str, labels: dict[str, dict]) -> None:
+    rows = []
+    for k, v in labels.items():
+        e = _normalize_entry(v)
+        rows.append({
+            "item_id":  k,
+            "label":    e["label"],
+            "note":     {1: "anomaly", 0: "normal", -1: "skip"}.get(e["label"], ""),
+            "incident": e["incident"],
+        })
+    pd.DataFrame(rows, columns=["item_id","label","note","incident"]).to_csv(
+        Path(data_dir) / "labels.csv", index=False)
+
+
+def _collect_incidents(labels: dict | None) -> list[str]:
+    """Return sorted unique non-empty incident names from current labels."""
+    if not labels:
+        return []
+    seen: set[str] = set()
+    for v in labels.values():
+        e = _normalize_entry(v)
+        if e["incident"]:
+            seen.add(e["incident"])
+    return sorted(seen)
 
 
 # ── chart ─────────────────────────────────────────────────────────────────────
@@ -260,7 +300,7 @@ def make_chart(item_id: int, data: dict, n_sigma: float) -> go.Figure:
     return fig
 
 
-# ── badge helper ──────────────────────────────────────────────────────────────
+# ── style helpers ─────────────────────────────────────────────────────────────
 
 def _badge(label: int | None) -> tuple[str, dict]:
     if label is None or label not in _LABEL_META:
@@ -271,12 +311,24 @@ def _badge(label: int | None) -> tuple[str, dict]:
                   "borderRadius": "12px", "fontWeight": "bold", "fontSize": "13px"}
 
 
+def _btn_style(value: int, current_label: int | None) -> dict:
+    return {"marginRight":"6px","padding":"4px 12px","cursor":"pointer",
+            "border":"1px solid #ccc","borderRadius":"6px",
+            "background": _LABEL_META[value][1] if current_label == value else "#f5f5f5"}
+
+
+def _incident_row_style(label: int | None) -> dict:
+    return {"display": "flex" if label == 1 else "none",
+            "alignItems":"center","marginTop":"6px","gap":"6px"}
+
+
 # ── layout helpers ────────────────────────────────────────────────────────────
 
-def _item_card(row: pd.Series, label: int | None, n_sigma: float, data: dict) -> html.Div:
-    iid  = int(row["itemid"])
-    sid  = str(iid)
-    fig  = make_chart(iid, data, n_sigma)
+def _item_card(row: pd.Series, entry: dict, n_sigma: float, data: dict) -> html.Div:
+    iid    = int(row["itemid"])
+    label  = entry.get("label")
+    incident = entry.get("incident", "")
+    fig    = make_chart(iid, data, n_sigma)
     badge_text, badge_style = _badge(label)
 
     info_parts = [row["host_name"], row["item_name"]]
@@ -286,24 +338,32 @@ def _item_card(row: pd.Series, label: int | None, n_sigma: float, data: dict) ->
         info_parts.append(f"cluster={int(row['clusterid'])}")
 
     return html.Div([
-        # Item title
         html.Div(" | ".join(str(p) for p in info_parts if p),
                  style={"fontSize":"12px","color":"#444","marginBottom":"4px",
                         "whiteSpace":"nowrap","overflow":"hidden","textOverflow":"ellipsis"}),
-        # Chart
         dcc.Graph(figure=fig, config={"displayModeBar": False},
                   style={"height":"200px"}),
-        # Label row
         html.Div([
             html.Button(text, id={"type":"label-btn","item":iid,"value":v},
-                        n_clicks=0,
-                        style={"marginRight":"6px","padding":"4px 12px","cursor":"pointer",
-                               "border":"1px solid #ccc","borderRadius":"6px",
-                               "background": bg if label==v else "#f5f5f5"})
-            for v, (text, bg, _) in _LABEL_META.items()
+                        n_clicks=0, style=_btn_style(v, label))
+            for v, (text, _, _) in _LABEL_META.items()
         ] + [
             html.Span(badge_text, id={"type":"label-badge","item":iid}, style=badge_style)
         ], style={"display":"flex","alignItems":"center","marginTop":"6px","gap":"4px"}),
+
+        html.Div([
+            html.Label("Incident:",
+                       style={"fontSize":"12px","color":"#666","minWidth":"60px"}),
+            dcc.Input(
+                id={"type":"incident-input","item":iid},
+                type="text", value=incident,
+                placeholder="(unassigned — type a name; same name = same incident)",
+                list="incident-options",
+                debounce=True,
+                style={"flex":"1","fontSize":"12px","padding":"3px 6px",
+                       "border":"1px solid #ccc","borderRadius":"4px"},
+            ),
+        ], id={"type":"incident-row","item":iid}, style=_incident_row_style(label)),
     ], style={"border":"1px solid #ddd","borderRadius":"8px","padding":"10px",
               "background":"#ffffff","marginBottom":"12px"})
 
@@ -316,17 +376,16 @@ def build_app(data: dict) -> Dash:
 
     app = Dash(__name__, title="Anomaly Labeling")
     app.layout = html.Div([
-        dcc.Store(id="labels-store",  storage_type="session"),
+        dcc.Store(id="labels-store",   storage_type="session"),
         dcc.Store(id="data-dir-store", data=data["data_dir"]),
+        html.Datalist(id="incident-options"),
 
-        # ── header ──
         html.Div([
             html.H3("Anomaly Labeling", style={"margin":"0","color":"#222"}),
             html.Span(id="progress-info", style={"marginLeft":"20px","color":"#555"}),
         ], style={"display":"flex","alignItems":"center","padding":"10px 20px",
                   "borderBottom":"1px solid #ddd","background":"#f8f8f8"}),
 
-        # ── controls ──
         html.Div([
             html.Label("Group:", style={"fontWeight":"bold","marginRight":"8px"}),
             dcc.Dropdown(
@@ -344,7 +403,6 @@ def build_app(data: dict) -> Dash:
         ], style={"padding":"10px 20px","borderBottom":"1px solid #eee","background":"#fafafa",
                   "display":"flex","alignItems":"center"}),
 
-        # ── item grid (2 columns) ──
         html.Div(id="item-grid",
                  style={"padding":"16px 20px",
                         "display":"grid","gridTemplateColumns":"1fr 1fr","gap":"12px"}),
@@ -354,13 +412,13 @@ def build_app(data: dict) -> Dash:
 
     @app.callback(
         Output("labels-store", "data"),
-        Input("labels-store", "data"),   # fires on load
+        Input("labels-store", "data"),
         State("data-dir-store", "data"),
         prevent_initial_call=False,
     )
     def _init_labels(current, data_dir):
         if current:
-            return current
+            return {k: _normalize_entry(v) for k, v in current.items()}
         return load_labels(data_dir)
 
     @app.callback(
@@ -376,16 +434,25 @@ def build_app(data: dict) -> Dash:
         rows = summary[summary["group_name"] == group]
         cards = []
         for _, row in rows.iterrows():
-            label = labels.get(str(int(row["itemid"])))
-            cards.append(_item_card(row, label, sigma or 3, data))
+            entry = _normalize_entry(labels.get(str(int(row["itemid"]))))
+            cards.append(_item_card(row, entry, sigma or 3, data))
         return cards
 
     @app.callback(
-        Output({"type": "label-badge", "item": MATCH}, "children"),
-        Output({"type": "label-badge", "item": MATCH}, "style"),
-        Output({"type": "label-btn",   "item": MATCH, "value": ALL}, "style"),
+        Output("incident-options", "children"),
+        Input("labels-store", "data"),
+    )
+    def _refresh_datalist(labels):
+        return [html.Option(value=name) for name in _collect_incidents(labels)]
+
+    @app.callback(
+        Output({"type": "label-badge",    "item": MATCH}, "children"),
+        Output({"type": "label-badge",    "item": MATCH}, "style"),
+        Output({"type": "label-btn",      "item": MATCH, "value": ALL}, "style"),
+        Output({"type": "incident-row",   "item": MATCH}, "style"),
+        Output({"type": "incident-input", "item": MATCH}, "value"),
         Output("labels-store", "data", allow_duplicate=True),
-        Input( {"type": "label-btn",   "item": MATCH, "value": ALL}, "n_clicks"),
+        Input( {"type": "label-btn",      "item": MATCH, "value": ALL}, "n_clicks"),
         State("labels-store",  "data"),
         State("data-dir-store","data"),
         prevent_initial_call=True,
@@ -399,17 +466,44 @@ def build_app(data: dict) -> Dash:
         new_label = ctx.triggered_id["value"]
 
         labels = dict(labels or {})
-        labels[str(item_id)] = new_label
+        cur = _normalize_entry(labels.get(str(item_id)))
+        new_incident = cur["incident"] if new_label == 1 else ""
+        labels[str(item_id)] = {"label": new_label, "incident": new_incident}
         save_labels(data_dir, labels)
 
         badge_text, badge_style = _badge(new_label)
-        btn_styles = [
-            {"marginRight":"6px","padding":"4px 12px","cursor":"pointer",
-             "border":"1px solid #ccc","borderRadius":"6px",
-             "background": _LABEL_META[v][1] if new_label==v else "#f5f5f5"}
-            for v in _LABEL_META
-        ]
-        return badge_text, badge_style, btn_styles, labels
+        btn_styles = [_btn_style(v, new_label) for v in _LABEL_META]
+        return (badge_text, badge_style, btn_styles,
+                _incident_row_style(new_label), new_incident, labels)
+
+    @app.callback(
+        Output("labels-store", "data", allow_duplicate=True),
+        Input({"type": "incident-input", "item": ALL}, "value"),
+        State({"type": "incident-input", "item": ALL}, "id"),
+        State("labels-store",  "data"),
+        State("data-dir-store","data"),
+        prevent_initial_call=True,
+    )
+    def _handle_incident(values, ids, labels, data_dir):
+        ctx = callback_context
+        trig = ctx.triggered_id
+        if not trig or not isinstance(trig, dict) or trig.get("type") != "incident-input":
+            raise PreventUpdate
+
+        iid = trig["item"]
+        new_incident = ""
+        for v, idx in zip(values, ids):
+            if idx["item"] == iid:
+                new_incident = (v or "").strip()
+                break
+
+        labels = dict(labels or {})
+        cur = _normalize_entry(labels.get(str(iid)))
+        if cur["incident"] == new_incident:
+            raise PreventUpdate
+        labels[str(iid)] = {"label": cur["label"], "incident": new_incident}
+        save_labels(data_dir, labels)
+        return labels
 
     @app.callback(
         Output("progress-info", "children"),
@@ -417,12 +511,26 @@ def build_app(data: dict) -> Dash:
     )
     def _update_progress(labels):
         labels = labels or {}
-        n_total  = len(summary)
-        n_labeled = sum(1 for v in labels.values() if v in (0, 1))
-        n_anom   = sum(1 for v in labels.values() if v == 1)
-        n_normal = sum(1 for v in labels.values() if v == 0)
+        n_total   = len(summary)
+        n_anom    = 0
+        n_normal  = 0
+        n_unassigned = 0
+        incidents: set[str] = set()
+        for v in labels.values():
+            e = _normalize_entry(v)
+            if e["label"] == 1:
+                n_anom += 1
+                if e["incident"]:
+                    incidents.add(e["incident"])
+                else:
+                    n_unassigned += 1
+            elif e["label"] == 0:
+                n_normal += 1
+        n_labeled = n_anom + n_normal
         return (f"{n_labeled}/{n_total} labeled  "
-                f"| 🔴 {n_anom} anomaly  🟢 {n_normal} normal  "
+                f"| 🔴 {n_anom}  🟢 {n_normal}  "
+                f"| 🧩 {len(incidents)} incidents  "
+                f"({n_unassigned} unassigned)  "
                 f"| {n_total - n_labeled} remaining")
 
     return app
