@@ -1,4 +1,6 @@
 org
+.gitignore
+.testdata
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
