@@ -64,6 +64,7 @@ _CASCADE_KEYS = (
     "detectors",
     "ensemble",
     "clustering",
+    "metric_categories",
     "item_filters",
     "anomaly_filters",
 )

@@ -29,6 +29,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.ensemble import EnsembleDetector
 from detectors.base import AnomalyScore
 from clustering.dbscan import cluster_anomalies
+from features.gating import apply_gates
 from pipeline.filters import apply_item_filters, apply_anomaly_filters
 
 logger = logging.getLogger(__name__)
@@ -117,18 +118,25 @@ class DetectionPipeline:
             for scores in scores_per_detector.values()
             for s in scores
         }
+        candidate_history_df = pd.DataFrame()
         if candidate_ids and ds_cfg.detectors.changepoint.enabled:
-            history_df = self._fetch_history_for_changepoint(
+            candidate_history_df = self._fetch_history_for_changepoint(
                 src, hist_store, ds_cfg, list(candidate_ids), endep
             )
             cp_det = ChangepointDetector(ds_cfg.detectors.changepoint)
             scores_per_detector["changepoint"] = cp_det.detect(
-                history_df=history_df, trends_stats=trends_stats
+                history_df=candidate_history_df, trends_stats=trends_stats
             )
 
         # --- Step 5: ensemble ---
         ensemble = EnsembleDetector(ds_cfg.detectors, ds_cfg.ensemble)
         final_scores = ensemble.combine(scores_per_detector)
+
+        # --- Step 5a: category / magnitude / duration gating ---
+        final_scores = self._apply_gating(
+            src, hist_store, ds_cfg, final_scores, history_stats, trends_stats,
+            candidate_history_df, endep,
+        )
 
         # --- Step 5b: apply anomaly_filters ---
         if ds_cfg.anomaly_filters:
@@ -222,6 +230,65 @@ class DetectionPipeline:
                 hist_store.upsert(df)
                 frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def _apply_gating(
+        self,
+        src: DataSource,
+        hist_store: HistoryStore,
+        ds_cfg: DataSourceConfig,
+        final_scores: list[AnomalyScore],
+        history_stats: pd.DataFrame,
+        trends_stats: pd.DataFrame,
+        candidate_history_df: pd.DataFrame,
+        endep: int,
+    ) -> list[AnomalyScore]:
+        """Apply category weight + magnitude + duration gating to ensemble scores.
+
+        Lightweight: one batched metadata lookup for the scored items, plus
+        (only when duration is enabled and not already cached) a history fetch
+        for scored items missing from the changepoint window.
+        """
+        if not final_scores:
+            return final_scores
+
+        cat_cfg = ds_cfg.metric_categories
+        scored_ids = [s.item_id for s in final_scores]
+
+        item_keys: dict[int, str] = {}
+        batch_size = ds_cfg.batch_size
+        for i in range(0, len(scored_ids), batch_size):
+            for d in src.get_item_details(scored_ids[i : i + batch_size]):
+                item_keys[d.item_id] = d.key_
+
+        history_df = candidate_history_df
+        if cat_cfg.duration.enabled:
+            have = (
+                set(candidate_history_df["itemid"].unique())
+                if not candidate_history_df.empty
+                else set()
+            )
+            missing = [i for i in scored_ids if i not in have]
+            if missing:
+                extra = self._fetch_history_for_changepoint(
+                    src, hist_store, ds_cfg, missing, endep
+                )
+                if not extra.empty:
+                    history_df = (
+                        pd.concat([candidate_history_df, extra], ignore_index=True)
+                        if not candidate_history_df.empty
+                        else extra
+                    )
+
+        return apply_gates(
+            final_scores,
+            item_keys=item_keys,
+            history_stats=history_stats,
+            trends_stats=trends_stats,
+            cfg=cat_cfg,
+            min_score=ds_cfg.ensemble.min_score,
+            history_df=history_df,
+            history_interval=ds_cfg.history_interval,
+        )
 
     def _write_anomalies(
         self,
