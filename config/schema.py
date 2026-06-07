@@ -80,6 +80,57 @@ class ClusteringConfig(BaseModel):
     detection_period: int = 43200
 
 
+class MagnitudeConfig(BaseModel):
+    """Scale a category's weight by the size of the change from baseline.
+
+    The driving quantity is always the *delta* Δ = |recent_mean - trend_mean|,
+    never the raw current value, so a host steady at a high level (Δ≈0) is not
+    flagged.  `mode` controls how Δ is normalised before the lo→hi ramp:
+      - absolute : Δ in native units (use for %, and for byte-rates whose
+                   operational floor is unit-coherent within the category)
+      - relative : Δ / |trend_mean|   (unit-free; for byte sizes that vary by host)
+      - sigma    : Δ / trend_std      (z-units)
+
+    scale = clamp((x - lo) / (hi - lo), 0, 1), floored at `floor`.
+    If hi <= lo it degenerates to a hard threshold at `hi`.
+    """
+    mode: Literal["absolute", "relative", "sigma"] = "absolute"
+    lo: float = 0.0    # Δ at/below which scale = 0 (ignore)
+    hi: float = 0.0    # Δ at/above which scale = 1 (full weight)
+    floor: float = 0.0
+
+
+class DurationConfig(BaseModel):
+    """Down-weight short-lived anomalies; reward sustained ones.
+
+    Within the recent history window, a sample is "anomalous" when it lies
+    outside trend_mean ± sigma·trend_std.  Anomalous time is the sample count
+    times `history_interval` (count mode) or the longest consecutive run
+    (consecutive mode).  scale ramps lo_secs → hi_secs.
+    """
+    enabled: bool = False
+    measure: Literal["count", "consecutive"] = "count"
+    sigma: float = 2.0
+    lo_secs: int = 600      # ≤ this anomalous time → scale 0 (single spike)
+    hi_secs: int = 3600     # ≥ this anomalous time → scale 1 (sustained ≥1h)
+    floor: float = 0.0
+
+
+class MetricCategoryRule(BaseModel):
+    """A metric category, matched by fnmatch glob(s) on items.key_ (== item_name
+    for CSV sources).  First matching category wins."""
+    name: str
+    key_patterns: list[str] = []
+    weight: float = 1.0
+    magnitude: MagnitudeConfig | None = None
+
+
+class MetricCategoriesConfig(BaseModel):
+    default_weight: float = 1.0
+    duration: DurationConfig = DurationConfig()
+    categories: list[MetricCategoryRule] = []
+
+
 class LoggingConfig(BaseModel):
     enabled: bool = False
     level: str = "INFO"
@@ -117,6 +168,7 @@ class DataSourceConfig(BaseModel):
     detectors: DetectorsConfig = DetectorsConfig()
     ensemble: EnsembleConfig = EnsembleConfig()
     clustering: ClusteringConfig = ClusteringConfig()
+    metric_categories: MetricCategoriesConfig = MetricCategoriesConfig()
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []
 
@@ -173,5 +225,6 @@ class AppConfig(BaseModel):
     detectors: DetectorsConfig = DetectorsConfig()
     ensemble: EnsembleConfig = EnsembleConfig()
     clustering: ClusteringConfig = ClusteringConfig()
+    metric_categories: MetricCategoriesConfig = MetricCategoriesConfig()
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []

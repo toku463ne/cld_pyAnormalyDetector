@@ -62,6 +62,58 @@ clustering:
   detection_period: 43200    # seconds of history used for clustering
 
 ##################################################
+#  metric categories (cascaded to data_sources)
+##################################################
+#  Per-metric-type weighting + magnitude/duration gating.
+#  An item is matched to the first category whose key_patterns (fnmatch globs
+#  on items.key_ / item_name) match.  The final decision is:
+#
+#    effective_score = ensemble_score × weight × magnitude_scale × duration_scale
+#    is_anomaly      = effective_score >= ensemble.min_score
+#
+#  - weight           : prior importance of the metric type (generalises to new data)
+#  - magnitude.*      : scales by Δ = |recent_mean - trend_mean| (change from baseline)
+#  - duration (global): scales by how long the item stayed anomalous in-window
+#
+#  Thresholds below are PLACEHOLDERS — tune via evaluation.backtester's
+#  per-category report.  Categories are kept unit-coherent (items.csv has no
+#  units column, so absolute thresholds only make sense within one metric type).
+metric_categories:
+  default_weight: 1.0
+  duration:
+    enabled: true
+    measure: count            # count = total anomalous samples; consecutive = longest run
+    sigma: 2.0                # sample is "anomalous" outside trend_mean ± sigma·trend_std
+    lo_secs: 600             # ≤ this anomalous time (one 10-min spike) → suppressed
+    hi_secs: 3600            # ≥ this (sustained ≥ 1h) → full weight
+    floor: 0.0
+  categories:
+    - name: network          # bytes/sec — absolute Δ floor (steady high host → Δ≈0 → ignored)
+      key_patterns: ["net.if.*", "vmware.vm.net.*", "docker.networks.*", "*session*traffic*"]
+      weight: 0.2
+      magnitude: {mode: absolute, lo: 1048576, hi: 10485760}   # 1 MB → 10 MB
+    - name: cpu_load         # load average — absolute Δ in load units (unbounded, ~scales with cores)
+      key_patterns: ["system.cpu.load*"]
+      weight: 1.0
+      magnitude: {mode: absolute, lo: 1, hi: 4}
+    - name: cpu              # percent — absolute Δ in percentage points
+      key_patterns: ["system.cpu.util*", "vmware.vm.cpu.*", "docker.container_stats.cpu_usage.*"]
+      weight: 1.0
+      magnitude: {mode: absolute, lo: 10, hi: 40}
+    - name: memory_pct       # percent — absolute Δ in percentage points
+      key_patterns: ["vm.memory.util*", "vm.memory.pusage*", "*.pusage*"]
+      weight: 0.7
+      magnitude: {mode: absolute, lo: 5, hi: 30}
+    - name: memory_bytes     # bytes — relative Δ (absolute level varies by host)
+      key_patterns: ["vm.memory.size*", "vm.memory.free*", "vm.memory.used*", "vm.memory.buffers*", "proc.mem*", "docker.container_stats.memory.usage*"]
+      weight: 0.7
+      magnitude: {mode: relative, lo: 0.1, hi: 0.5}
+    - name: disk             # bytes/ops — relative Δ
+      key_patterns: ["vfs.fs.*", "vfs.dev.*", "truenas.dataset.*"]
+      weight: 0.5
+      magnitude: {mode: relative, lo: 0.05, hi: 0.3}
+
+##################################################
 #  item / anomaly filters (cascaded to data_sources)
 ##################################################
 #  Filters are matched by items.key_ (fnmatch glob) and items.units (exact).
