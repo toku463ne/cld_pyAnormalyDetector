@@ -30,12 +30,17 @@ Dataset directory files
 Output
 ------
   labels.csv in the dataset directory (auto-saved on every change)
-  item_id, label, note, incident
-    label:    1=anomaly  0=normal  -1=skip
-    incident: free-text incident name (same string = same root cause).
-              Only meaningful when label==1; cleared automatically otherwise.
-              Used by evaluation to compute clustering quality (ARI etc.)
-              against the detector's clusterid.
+  item_id, label, note, incident, confidence
+    label:      1=anomaly  0=normal  -1=skip
+    incident:   free-text incident name (same string = same root cause).
+                Only meaningful when label==1; cleared automatically otherwise.
+                Used by evaluation to compute clustering quality (ARI etc.)
+                against the detector's clusterid.
+    confidence: how alert-worthy this anomaly is, 0.0–1.0 (default 1.0).
+                Only meaningful when label==1; blank otherwise.  Evaluation
+                weights recall by category_weight × confidence, so lowering
+                it on a minor/borderline anomaly tells the tuner it's OK to
+                miss.  See [[evaluation/metrics.py]] weighted_recall.
 """
 from __future__ import annotations
 import argparse
@@ -179,14 +184,26 @@ def _build_summary(anom: pd.DataFrame, items: pd.DataFrame,
 
 # ── label persistence ─────────────────────────────────────────────────────────
 
+def _coerce_conf(v) -> float:
+    """Coerce any stored value into a confidence in [0,1]; default 1.0."""
+    try:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return 1.0
+        f = float(v)
+    except (TypeError, ValueError):
+        return 1.0
+    return min(max(f, 0.0), 1.0)
+
+
 def _normalize_entry(v) -> dict:
-    """Coerce legacy int values into the {label, incident} dict shape."""
+    """Coerce legacy values into the {label, incident, confidence} dict shape."""
     if isinstance(v, dict):
         return {"label": int(v.get("label", -1)),
-                "incident": str(v.get("incident", "") or "").strip()}
+                "incident": str(v.get("incident", "") or "").strip(),
+                "confidence": _coerce_conf(v.get("confidence", 1.0))}
     if isinstance(v, int):
-        return {"label": v, "incident": ""}
-    return {"label": -1, "incident": ""}
+        return {"label": v, "incident": "", "confidence": 1.0}
+    return {"label": -1, "incident": "", "confidence": 1.0}
 
 
 def load_labels(data_dir: str) -> dict[str, dict]:
@@ -196,6 +213,7 @@ def load_labels(data_dir: str) -> dict[str, dict]:
     df = pd.read_csv(p)
     df.columns = df.columns.str.strip()
     has_incident = "incident" in df.columns
+    has_confidence = "confidence" in df.columns
     out: dict[str, dict] = {}
     for r in df.itertuples():
         iid = str(int(r.item_id))
@@ -203,7 +221,8 @@ def load_labels(data_dir: str) -> dict[str, dict]:
         if has_incident:
             raw = getattr(r, "incident", "")
             incident = "" if pd.isna(raw) else str(raw).strip()
-        out[iid] = {"label": int(r.label), "incident": incident}
+        confidence = _coerce_conf(getattr(r, "confidence", 1.0)) if has_confidence else 1.0
+        out[iid] = {"label": int(r.label), "incident": incident, "confidence": confidence}
     return out
 
 
@@ -212,12 +231,14 @@ def save_labels(data_dir: str, labels: dict[str, dict]) -> None:
     for k, v in labels.items():
         e = _normalize_entry(v)
         rows.append({
-            "item_id":  k,
-            "label":    e["label"],
-            "note":     {1: "anomaly", 0: "normal", -1: "skip"}.get(e["label"], ""),
-            "incident": e["incident"],
+            "item_id":    k,
+            "label":      e["label"],
+            "note":       {1: "anomaly", 0: "normal", -1: "skip"}.get(e["label"], ""),
+            "incident":   e["incident"],
+            # confidence only meaningful for anomalies; blank otherwise
+            "confidence": e["confidence"] if e["label"] == 1 else "",
         })
-    pd.DataFrame(rows, columns=["item_id","label","note","incident"]).to_csv(
+    pd.DataFrame(rows, columns=["item_id","label","note","incident","confidence"]).to_csv(
         Path(data_dir) / "labels.csv", index=False)
 
 
@@ -322,12 +343,18 @@ def _incident_row_style(label: int | None) -> dict:
             "alignItems":"center","marginTop":"6px","gap":"6px"}
 
 
+def _confidence_row_style(label: int | None) -> dict:
+    return {"display": "flex" if label == 1 else "none",
+            "alignItems":"center","marginTop":"6px","gap":"6px"}
+
+
 # ── layout helpers ────────────────────────────────────────────────────────────
 
 def _item_card(row: pd.Series, entry: dict, n_sigma: float, data: dict) -> html.Div:
     iid    = int(row["itemid"])
     label  = entry.get("label")
     incident = entry.get("incident", "")
+    confidence = entry.get("confidence", 1.0)
     fig    = make_chart(iid, data, n_sigma)
     badge_text, badge_style = _badge(label)
 
@@ -364,6 +391,20 @@ def _item_card(row: pd.Series, entry: dict, n_sigma: float, data: dict) -> html.
                        "border":"1px solid #ccc","borderRadius":"4px"},
             ),
         ], id={"type":"incident-row","item":iid}, style=_incident_row_style(label)),
+
+        html.Div([
+            html.Label("Confidence:",
+                       style={"fontSize":"12px","color":"#666","minWidth":"60px"}),
+            html.Div(
+                dcc.Slider(
+                    id={"type":"confidence-slider","item":iid},
+                    min=0, max=1, step=0.1, value=confidence,
+                    marks={0: "0", 0.5: "0.5", 1: "1"},
+                    tooltip={"always_visible": False, "placement": "bottom"},
+                ),
+                style={"flex":"1","paddingTop":"4px"},
+            ),
+        ], id={"type":"confidence-row","item":iid}, style=_confidence_row_style(label)),
     ], style={"border":"1px solid #ddd","borderRadius":"8px","padding":"10px",
               "background":"#ffffff","marginBottom":"12px"})
 
@@ -446,13 +487,15 @@ def build_app(data: dict) -> Dash:
         return [html.Option(value=name) for name in _collect_incidents(labels)]
 
     @app.callback(
-        Output({"type": "label-badge",    "item": MATCH}, "children"),
-        Output({"type": "label-badge",    "item": MATCH}, "style"),
-        Output({"type": "label-btn",      "item": MATCH, "value": ALL}, "style"),
-        Output({"type": "incident-row",   "item": MATCH}, "style"),
-        Output({"type": "incident-input", "item": MATCH}, "value"),
+        Output({"type": "label-badge",       "item": MATCH}, "children"),
+        Output({"type": "label-badge",       "item": MATCH}, "style"),
+        Output({"type": "label-btn",         "item": MATCH, "value": ALL}, "style"),
+        Output({"type": "incident-row",      "item": MATCH}, "style"),
+        Output({"type": "incident-input",    "item": MATCH}, "value"),
+        Output({"type": "confidence-row",    "item": MATCH}, "style"),
+        Output({"type": "confidence-slider", "item": MATCH}, "value"),
         Output("labels-store", "data", allow_duplicate=True),
-        Input( {"type": "label-btn",      "item": MATCH, "value": ALL}, "n_clicks"),
+        Input( {"type": "label-btn",         "item": MATCH, "value": ALL}, "n_clicks"),
         State("labels-store",  "data"),
         State("data-dir-store","data"),
         prevent_initial_call=True,
@@ -468,13 +511,17 @@ def build_app(data: dict) -> Dash:
         labels = dict(labels or {})
         cur = _normalize_entry(labels.get(str(item_id)))
         new_incident = cur["incident"] if new_label == 1 else ""
-        labels[str(item_id)] = {"label": new_label, "incident": new_incident}
+        # Preserve the item's confidence in the store; show it when anomaly.
+        labels[str(item_id)] = {"label": new_label, "incident": new_incident,
+                                "confidence": cur["confidence"]}
         save_labels(data_dir, labels)
 
         badge_text, badge_style = _badge(new_label)
         btn_styles = [_btn_style(v, new_label) for v in _LABEL_META]
+        slider_value = cur["confidence"] if new_label == 1 else 1.0
         return (badge_text, badge_style, btn_styles,
-                _incident_row_style(new_label), new_incident, labels)
+                _incident_row_style(new_label), new_incident,
+                _confidence_row_style(new_label), slider_value, labels)
 
     @app.callback(
         Output("labels-store", "data", allow_duplicate=True),
@@ -501,7 +548,38 @@ def build_app(data: dict) -> Dash:
         cur = _normalize_entry(labels.get(str(iid)))
         if cur["incident"] == new_incident:
             raise PreventUpdate
-        labels[str(iid)] = {"label": cur["label"], "incident": new_incident}
+        labels[str(iid)] = {"label": cur["label"], "incident": new_incident,
+                            "confidence": cur["confidence"]}
+        save_labels(data_dir, labels)
+        return labels
+
+    @app.callback(
+        Output("labels-store", "data", allow_duplicate=True),
+        Input({"type": "confidence-slider", "item": ALL}, "value"),
+        State({"type": "confidence-slider", "item": ALL}, "id"),
+        State("labels-store",  "data"),
+        State("data-dir-store","data"),
+        prevent_initial_call=True,
+    )
+    def _handle_confidence(values, ids, labels, data_dir):
+        ctx = callback_context
+        trig = ctx.triggered_id
+        if not trig or not isinstance(trig, dict) or trig.get("type") != "confidence-slider":
+            raise PreventUpdate
+
+        iid = trig["item"]
+        new_conf = 1.0
+        for v, idx in zip(values, ids):
+            if idx["item"] == iid:
+                new_conf = _coerce_conf(v)
+                break
+
+        labels = dict(labels or {})
+        cur = _normalize_entry(labels.get(str(iid)))
+        if abs(cur["confidence"] - new_conf) < 1e-9:
+            raise PreventUpdate
+        labels[str(iid)] = {"label": cur["label"], "incident": cur["incident"],
+                            "confidence": new_conf}
         save_labels(data_dir, labels)
         return labels
 
@@ -515,6 +593,7 @@ def build_app(data: dict) -> Dash:
         n_anom    = 0
         n_normal  = 0
         n_unassigned = 0
+        n_lowconf = 0
         incidents: set[str] = set()
         for v in labels.values():
             e = _normalize_entry(v)
@@ -524,6 +603,8 @@ def build_app(data: dict) -> Dash:
                     incidents.add(e["incident"])
                 else:
                     n_unassigned += 1
+                if e["confidence"] < 1.0:
+                    n_lowconf += 1
             elif e["label"] == 0:
                 n_normal += 1
         n_labeled = n_anom + n_normal
@@ -531,6 +612,7 @@ def build_app(data: dict) -> Dash:
                 f"| 🔴 {n_anom}  🟢 {n_normal}  "
                 f"| 🧩 {len(incidents)} incidents  "
                 f"({n_unassigned} unassigned)  "
+                f"| 📉 {n_lowconf} low-conf  "
                 f"| {n_total - n_labeled} remaining")
 
     return app
