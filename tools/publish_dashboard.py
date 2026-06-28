@@ -15,7 +15,13 @@ import pandas as pd
 from config.loader import load_config
 from db.postgresql import PostgreSqlDB
 from store.anomalies import AnomaliesStore
-from tools._dashboard import build_pages, dashboard_url, pagedata_by_group, publish
+from tools._dashboard import (
+    build_pages,
+    dashboard_url,
+    pagedata_by_cluster,
+    pagedata_by_group,
+    publish,
+)
 from tools._zabbix import ZabbixAPI
 
 logger = logging.getLogger(__name__)
@@ -43,22 +49,33 @@ def main() -> int:
             continue
         any_enabled = True
         df = _latest_cycle(AnomaliesStore(ds_name, db).get())
-        pagedata = pagedata_by_group(df)
-        if not pagedata:
+        group_pd = pagedata_by_group(df)
+        cluster_pd = pagedata_by_cluster(df)
+        if not group_pd and not cluster_pd:
             logger.info("[%s] no anomalies to publish", ds_name)
             continue
-        pages = build_pages(pagedata, dcfg.widget_type)
         api_url = dcfg.api_url or ds_cfg.api_url
         try:
             zapi = ZabbixAPI(api_url, dcfg.user, dcfg.password)
-            did = publish(zapi, dcfg.hourly_name, pages)
         except Exception:
-            logger.exception("[%s] dashboard publish failed", ds_name)
+            logger.exception("[%s] dashboard connect failed", ds_name)
             continue
-        logger.info(
-            "[%s] published '%s' (%d pages) -> %s",
-            ds_name, dcfg.hourly_name, len(pages), dashboard_url(api_url, did),
-        )
+        # (a) by group, and the same results one page per incident cluster
+        for name, pagedata in (
+            (dcfg.hourly_name, group_pd),
+            (dcfg.bycluster_name, cluster_pd),
+        ):
+            if not pagedata:
+                continue
+            try:
+                pages = build_pages(pagedata, dcfg.widget_type)
+                did = publish(zapi, name, pages)
+                logger.info(
+                    "[%s] published '%s' (%d pages) -> %s",
+                    ds_name, name, len(pages), dashboard_url(api_url, did),
+                )
+            except Exception:
+                logger.exception("[%s] publish '%s' failed", ds_name, name)
 
     if not any_enabled:
         logger.info("no data source has dashboards.enabled")

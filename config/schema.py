@@ -175,8 +175,9 @@ class DashboardsConfig(BaseModel):
     api_url: str = ""
     user: str = ""
     password: str = ""
-    hourly_name: str = "anomdec_detected"   # (a) anomdec-detect results
-    fast_name: str = "anomdec_fast"          # (b) anomdec-detect-fast results
+    hourly_name: str = "anomdec_detected"     # (a) anomdec-detect results, by group
+    bycluster_name: str = "anomdec_bycluster" # (a) same results, one page per cluster
+    fast_name: str = "anomdec_fast"           # (b) anomdec-detect-fast results
     widget_type: Literal["graph", "svggraph"] = "graph"  # svggraph for Zabbix 7.0+
 
 

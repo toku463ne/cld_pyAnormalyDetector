@@ -4,6 +4,7 @@ import pandas as pd
 from tools._dashboard import (
     build_pages,
     dashboard_url,
+    pagedata_by_cluster,
     pagedata_by_group,
     pagedata_for_fast,
 )
@@ -27,6 +28,30 @@ def test_pagedata_by_group_collapses_clusters_keeps_noise():
 
 def test_pagedata_by_group_empty():
     assert pagedata_by_group(_anom([])) == {}
+
+
+def test_pagedata_by_cluster_collapses_singletons():
+    df = _anom([
+        ("A", 1, 5, 10),   # cluster 5 has 2 items -> own page
+        ("B", 2, 5, 11),
+        ("C", 3, 7, 20),   # cluster 7 has 1 item -> singletons
+        ("D", 4, -1, 30),  # noise -> singletons
+    ])
+    out = pagedata_by_cluster(df)
+    assert out["cluster5"] == [10, 11]
+    assert "cluster7" not in out
+    assert sorted(out["singletons"]) == [20, 30]
+
+
+def test_pagedata_by_cluster_dedups_and_caps():
+    # cluster 5 has a duplicate row + a second distinct item -> stays a cluster, deduped
+    rows = [("A", 1, 5, 10), ("A", 1, 5, 10), ("B", 2, 5, 11)]
+    # many multi-item clusters to exceed the cap
+    for c in range(60):
+        rows += [("g", 1, c + 100, c * 10), ("g", 2, c + 100, c * 10 + 1)]
+    out = pagedata_by_cluster(_anom(rows), max_clusters=50)
+    assert out["cluster5"] == [10, 11]          # duplicate collapsed
+    assert len(out) <= 50                        # capped
 
 
 def test_pagedata_for_fast_one_page_per_event():

@@ -249,7 +249,7 @@ Three dashboards cover the workflow:
 
 | # | Dashboard | Source | How |
 |---|---|---|---|
-| (a) | hourly detection | `anomdec-detect` → `{ds}_anomalies` | `anomdec-publish-dashboard` (run from `run-detect.sh`); one page per `group_name`, cluster-collapsed, like the old `zabbix_dashboard.py` |
+| (a) | hourly detection | `anomdec-detect` → `{ds}_anomalies` | `anomdec-publish-dashboard` (run from `run-detect.sh`) publishes two: `hourly_name` (one page per `group_name`) and `bycluster_name` (one page/tab per incident cluster, singletons merged) — like the old `zabbix_dashboard.py` |
 | (b) | fast / on-demand | `anomdec-detect-fast` | published each fast run; its URL is written into `fast_events.json` as `dashboard_url` for the chat webhook |
 | (c) | labeling | `anomdec-label-queue` → `anomdec-label` | the interactive Dash UI (see [Daily labeling queue](#daily-labeling-queue-recommended)) |
 

@@ -92,6 +92,40 @@ def pagedata_by_group(anomalies_df: pd.DataFrame) -> dict[str, list[int]]:
     return out
 
 
+def pagedata_by_cluster(
+    anomalies_df: pd.DataFrame, max_clusters: int = 50
+) -> dict[str, list[int]]:
+    """One page per incident cluster, like the old ZabbixDashboard.update_cluster().
+
+    Items are deduped by (clusterid, hostid, itemid).  Clusters with a single item
+    (and existing noise, clusterid == -1) are merged into one 'singletons' page;
+    real multi-item clusters each get their own 'cluster<N>' page.  Capped at
+    max_clusters pages.
+    """
+    if anomalies_df is None or anomalies_df.empty:
+        return {}
+    df = anomalies_df.copy()
+    df["clusterid"] = df["clusterid"].fillna(-1).astype(int)
+    df = (
+        df.sort_values(["clusterid", "hostid", "itemid"])
+        .drop_duplicates(subset=["clusterid", "hostid", "itemid"])
+    )
+    # collapse single-item clusters into the noise/singletons bucket
+    counts = df.groupby("clusterid")["clusterid"].transform("count")
+    df.loc[(counts == 1) & (df["clusterid"] >= 0), "clusterid"] = -1
+
+    out: dict[str, list[int]] = {}
+    for row in df.itertuples(index=False):
+        cid = int(row.clusterid)
+        name = f"cluster{cid}" if cid >= 0 else "singletons"
+        if name not in out:
+            if len(out) >= max_clusters:
+                continue
+            out[name] = []
+        out[name].append(int(row.itemid))
+    return out
+
+
 def pagedata_for_fast(events: list[dict]) -> dict[str, list[int]]:
     """One page per fast event (co-occurrence cluster or standalone), items from
     each event's members.  `events` are the serialized event dicts from the fast
