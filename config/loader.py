@@ -67,6 +67,7 @@ _CASCADE_KEYS = (
     "metric_categories",
     "item_filters",
     "anomaly_filters",
+    "fast_detect",
 )
 
 

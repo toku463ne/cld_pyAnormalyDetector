@@ -131,6 +131,34 @@ class MetricCategoriesConfig(BaseModel):
     categories: list[MetricCategoryRule] = []
 
 
+class WatchRule(BaseModel):
+    """One watchlist entry for the fast axis.  An item matches if its key_/name
+    matches key_pattern (fnmatch glob) AND its host matches host_pattern.  An
+    empty pattern matches all on that dimension."""
+    key_pattern: str = ""    # fnmatch glob on item key_ (== item name for these sources)
+    host_pattern: str = ""   # fnmatch glob on host_name
+
+
+class FastDetectConfig(BaseModel):
+    """High-frequency, short-span detection over a small watchlist.
+
+    Runs every few minutes against a short history window, scores each watched
+    item by a short-window z-score, vetoes levels the seasonal baseline considers
+    expected (backup-traffic filter), groups co-occurring triggers, and writes a
+    JSON event file for Zabbix to poll.
+    """
+    enabled: bool = False
+    watch: list[WatchRule] = []
+    history_span_secs: int = 3600   # length of the short baseline window
+    detect_window: int = 4          # last N samples form the "recent" mean
+    lambda_threshold: float = 3.0   # short-window z -> severity (ZScore ramp)
+    min_item_score: float = 0.5     # per-item trigger threshold
+    seasonal_veto: bool = True      # suppress levels expected for this hour-of-day
+    seasonal_lambda: float = 3.0    # |recent - hour_mean|/hour_std < this => expected
+    cooccur: bool = True            # group co-triggers via DBSCAN
+    output_path: str = "/tmp/anomdec/fast_events.json"
+
+
 class LoggingConfig(BaseModel):
     enabled: bool = False
     level: str = "INFO"
@@ -171,6 +199,7 @@ class DataSourceConfig(BaseModel):
     metric_categories: MetricCategoriesConfig = MetricCategoriesConfig()
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []
+    fast_detect: FastDetectConfig = FastDetectConfig()
 
     model_config = {"populate_by_name": True}
 
@@ -228,3 +257,4 @@ class AppConfig(BaseModel):
     metric_categories: MetricCategoriesConfig = MetricCategoriesConfig()
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []
+    fast_detect: FastDetectConfig = FastDetectConfig()

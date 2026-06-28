@@ -156,6 +156,31 @@ metric_categories:
 #     min_abs_diff: 1000000
 
 ##################################################
+#  fast_detect: high-frequency short-span axis (cascaded to data_sources)
+##################################################
+#  A second detection axis for a small watchlist: run every 5-10 min via cron
+#  (anomdec-detect-fast), score each watched item against a short window, veto
+#  levels the seasonal baseline (hour_stats) considers expected (e.g. nightly
+#  backup traffic), group co-occurring triggers, and write a JSON event file
+#  that Zabbix polls ($.max_score) so a webhook can forward to chat.
+#
+#  Disabled by default. Uncomment and point `watch` at your critical items.
+#
+# fast_detect:
+#   enabled: true
+#   watch:                              # match ANY rule; empty pattern = match-all
+#     - key_pattern: "cisco.asav.session.*"
+#     - host_pattern: "sbc*"
+#   history_span_secs: 3600             # short baseline window (~6 samples @10min)
+#   detect_window: 4                    # last N samples form the "recent" mean
+#   lambda_threshold: 3.0               # short-window z -> severity
+#   min_item_score: 0.5                 # per-item trigger threshold
+#   seasonal_veto: true                 # drop levels expected for this hour-of-day
+#   seasonal_lambda: 3.0
+#   cooccur: true                       # group co-triggers (noisy-OR boosts score)
+#   output_path: "/var/lib/anomdec/fast_events.json"
+
+##################################################
 #  data_sources: define your sources here
 ##################################################
 # data_sources:

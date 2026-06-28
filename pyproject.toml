@@ -30,6 +30,7 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 anomdec-detect        = "detect_anomalies:main"
+anomdec-detect-fast   = "detect_fast:main"
 anomdec-update-stats  = "update_stats:main"
 anomdec-sample            = "tools.sample_prod:main"
 anomdec-dashboard         = "tools.prepare_labeling_dashboard:main"
