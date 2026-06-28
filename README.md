@@ -40,10 +40,59 @@ GRANT ALL ON SCHEMA public TO anomdec;
 |---|---|
 | `anomdec-detect` | Hourly anomaly detection (production) |
 | `anomdec-update-stats` | Daily trends / hour-stats batch update |
+| `anomdec-label-queue` | Build the daily stratified labeling queue (recommended) |
 | `anomdec-sample` | Sample production data for labeling (stratified random sample) |
 | `anomdec-dashboard` | Create a Zabbix dashboard from a sample for review |
 | `anomdec-export-dashboard` | Export every item shown in an existing Zabbix dashboard |
 | `anomdec-label` | Launch labeling UI (Dash) |
+
+## Daily labeling queue (recommended)
+
+With 30k+ items you can't label everything, and labeling only what the detector
+flags hides its own misses. `anomdec-label-queue` builds a small **stratified**
+daily queue from *this repo's* output (it does not depend on any old
+`abnormal_check` dashboard):
+
+- **flagged** — real alerts from the `{ds}_anomalies` table, collapsed to **one
+  item per incident cluster** → measures precision
+- **boundary** — items scored just under threshold (0.1–0.5) → recall / threshold
+- **control** — a random sample of low-scoring items → miss-rate control
+
+It dedups against a persistent master label file keyed by **(host, key_)** (which
+survives Zabbix item-id churn), so each day surfaces only unlabeled items.
+
+Prerequisite: the hourly `anomdec-detect` and daily `anomdec-update-stats` have
+run (the queue reads their stored stats + anomalies; only the ~50 selected items
+are pulled from Zabbix for the UI charts).
+
+```bash
+# Daily cycle:
+uv run anomdec-label-queue merge    --dataset datasets/queue_<yesterday>/psql   # fold yesterday in
+uv run anomdec-label-queue generate -c config.yml --source production \
+    --output datasets/queue_$(date +%Y%m%d)/psql --n-mid 25 --n-random 15
+uv run anomdec-label --dataset datasets/queue_$(date +%Y%m%d)/psql              # label
+```
+
+The master file defaults to `datasets/master_labels.csv` (override with
+`--master`). Run the backtester over accumulated queues to track precision/recall
+as the corpus grows.
+
+### Leaner: trust the first-stage z-score
+
+For a smaller, higher-purity daily set, source the flagged stratum from the
+**first-stage z-score** (simple recent-vs-trend comparison) instead of the
+gated-ensemble anomalies table. These candidates are few and very likely real, and
+need only the stored stats (no anomalies table / ensemble):
+
+```bash
+uv run anomdec-label-queue generate -c config.yml --source production \
+    --output datasets/queue_$(date +%Y%m%d)/psql \
+    --flagged-from zscore --n-flagged 30 --n-mid 0 --n-random 10
+```
+
+Keep the small `--n-random` control slice: labeling *only* flagged items measures
+precision but hides what the detector misses (recall). The control sample keeps
+"is detection doing good?" answerable.
 
 ## Export prod data
 - Step 1: sample from prod (takes ~minutes depending on item count)
