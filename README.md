@@ -232,10 +232,56 @@ uv run python -m evaluation.backtester \
 
 ## Production execution
 
-```bash
-# Hourly (via cron)
-uv run anomdec-detect -c config.yml
+Run by hand:
 
-# Daily (via cron, off-peak)
-uv run anomdec-update-stats -c config.yml
+```bash
+uv run anomdec-detect       -c config.yml   # hourly
+uv run anomdec-detect-fast  -c config.yml   # every 5–10 min
+uv run anomdec-update-stats -c config.yml   # daily, off-peak
 ```
+
+### Scheduling (cron)
+
+Four periodic jobs, ordered by cadence and dependency:
+
+| Job | Cadence | Purpose | Notes |
+|---|---|---|---|
+| `anomdec-detect-fast` | every 10 min | short-span watchlist → `fast_events.json` for Zabbix | no point faster than the data interval |
+| `anomdec-detect` | hourly (`:05`) | full detection → `{ds}_anomalies` + clusters | run after the top of the hour so history has landed |
+| `anomdec-update-stats` | daily (`02:15`) | refresh `trends_stats` + `hour_stats` (heavy) | off-peak; the seasonal baseline the others rely on |
+| `anomdec-label-queue generate` | daily (`07:30`) | build the day's labeling queue | after stats + several detect runs; needs stored stats |
+
+Each job has a wrapper in `scripts/cron/` that handles the environment, working
+directory, `flock` (no overlapping runs), logging, and the dated output path — so
+the crontab lines stay trivial. **Edit `scripts/cron/anomdec-env.sh` once** for
+your paths/secret; the wrappers source it.
+
+```cron
+# ── pyAnomalyDetector ───────────────────────────────────────────────
+*/10 * * * *  /opt/anomdec/scripts/cron/run-detect-fast.sh    # fast axis
+5    * * * *  /opt/anomdec/scripts/cron/run-detect.sh          # hourly detection
+15   2 * * *  /opt/anomdec/scripts/cron/run-update-stats.sh    # daily stats (off-peak)
+30   7 * * *  /opt/anomdec/scripts/cron/run-label-queue.sh     # daily labeling queue
+```
+
+`scripts/cron/anomdec-env.sh` (edit these):
+
+```bash
+export ANOMDEC_HOME="/opt/anomdec"               # repo / working dir
+export ANOMDEC_BIN="$ANOMDEC_HOME/.venv/bin"     # venv entrypoints
+export ANOMDEC_LOG="/var/log/anomdec"
+export ANOMDEC_CONFIG="config.yml"
+export ANOMDEC_SECRET_PATH="/etc/anomdec/secret.yml"
+export ANOMDEC_SOURCE="production"               # data_source for the queue
+export ANOMDEC_QUEUE_ARGS="--flagged-from zscore --n-flagged 30 --n-mid 0 --n-random 10"
+```
+
+Setup notes:
+- `mkdir -p /var/log/anomdec` and add a logrotate rule for `/var/log/anomdec/*.log`.
+- The cron user must own the venv and be able to reach the admdb (via
+  `ANOMDEC_SECRET_PATH`); see [Setup](#setup).
+- The labeling queue only *generates* candidates; **labeling stays interactive**
+  (`anomdec-label`) and `anomdec-label-queue merge` is run by hand after a day's
+  labels are done — don't cron the merge, or unlabeled skeletons get folded in.
+- Old anomalies are pruned in-process (`anomaly_keep_secs`), so no cleanup job is
+  needed.
