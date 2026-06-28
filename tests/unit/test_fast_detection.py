@@ -163,7 +163,8 @@ def test_build_result_shape():
 
 def test_empty_result_shape():
     r = _empty_result(123)
-    assert r == {"ts": 123, "max_score": 0.0, "n_events": 0, "events": [], "suppressed": []}
+    assert r == {"ts": 123, "max_score": 0.0, "n_events": 0, "events": [],
+                 "suppressed": [], "dashboard_url": None}
 
 
 # ----------------------------------------------------------------------

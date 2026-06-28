@@ -18,10 +18,21 @@ ANOMDEC_DB_PASSWORD=... ./scripts/setup.sh --check-only
 ./scripts/setup.sh --help
 ```
 
-The health test (`scripts/healthcheck.py`, also runnable standalone) connects as
-the app user, creates the full store table set via the real code path — proving
-CREATE/ALTER privileges and that the `rescued` column migration applies — then
-drops it, and checks the CLI entrypoints.
+The health test (`scripts/healthcheck.py`, also runnable standalone) has two
+modes:
+
+- **admdb-only** (default; what `--check-only` runs): connects as the app user,
+  creates the full store table set via the real code path — proving CREATE/ALTER
+  privileges and that the `rescued` migration applies — then drops it.
+- **full readiness** (`-c config.yml`): also loads the config + secrets and
+  **connects to every data source** (e.g. your Zabbix DB), plus prints whether the
+  stats/anomalies tables have data yet. Once `config.yml` exists:
+
+  ```bash
+  ANOMDEC_SECRET_PATH=/path/secret.yml \
+    .venv/bin/python scripts/healthcheck.py -c config.yml
+  # or fold it into setup:  ./scripts/setup.sh --check-only --config config.yml
+  ```
 
 Copy `secret.example.yml`, fill in real values, and point the app at it:
 `export ANOMDEC_SECRET_PATH=/path/to/secret.yml` (or use `--write-secret`).
@@ -39,6 +50,8 @@ GRANT ALL ON SCHEMA public TO anomdec;
 | Command | Description |
 |---|---|
 | `anomdec-detect` | Hourly anomaly detection (production) |
+| `anomdec-detect-fast` | High-frequency short-span detection (watchlist) |
+| `anomdec-publish-dashboard` | Publish detect results to a Zabbix dashboard |
 | `anomdec-update-stats` | Daily trends / hour-stats batch update |
 | `anomdec-label-queue` | Build the daily stratified labeling queue (recommended) |
 | `anomdec-sample` | Sample production data for labeling (stratified random sample) |
@@ -229,6 +242,38 @@ uv run python -m evaluation.backtester \
     --dataset datasets/sample_.../psql \
     --labels  datasets/sample_.../psql/labels.csv
 ```
+
+## Result dashboards (Zabbix)
+
+Three dashboards cover the workflow:
+
+| # | Dashboard | Source | How |
+|---|---|---|---|
+| (a) | hourly detection | `anomdec-detect` → `{ds}_anomalies` | `anomdec-publish-dashboard` (run from `run-detect.sh`); one page per `group_name`, cluster-collapsed, like the old `zabbix_dashboard.py` |
+| (b) | fast / on-demand | `anomdec-detect-fast` | published each fast run; its URL is written into `fast_events.json` as `dashboard_url` for the chat webhook |
+| (c) | labeling | `anomdec-label-queue` → `anomdec-label` | the interactive Dash UI (see [Daily labeling queue](#daily-labeling-queue-recommended)) |
+
+Enable (a)/(b) per data source. API creds come from your secrets file; `api_url`
+falls back to the data source's `api_url` (the web base):
+
+```yaml
+data_sources:
+  production:
+    type: zabbix_psql
+    # ...
+    api_url: "{{ ZABBIX_PSQL_API_URL }}"        # web base, e.g. http://zabbix/
+    dashboards:
+      enabled: true
+      user: "{{ ZABBIX_PSQL_API_USER }}"
+      password: "{{ ZABBIX_PSQL_API_PASSWORD }}"
+      hourly_name: anomdec_detected             # (a)
+      fast_name: anomdec_fast                   # (b)
+      widget_type: graph                        # svggraph for Zabbix 7.0+
+```
+
+Publishing is best-effort — a Zabbix API hiccup never fails the detection job or
+blocks the fast JSON. The dashboard view URL is
+`<web_base>/zabbix.php?action=dashboard.view&dashboardid=<id>`.
 
 ## Production execution
 

@@ -164,6 +164,22 @@ class FastDetectConfig(BaseModel):
     output_path: str = "/tmp/anomdec/fast_events.json"
 
 
+class DashboardsConfig(BaseModel):
+    """Publish detection results to Zabbix dashboards.
+
+    api_url falls back to the data source's api_url (the web base, e.g.
+    http://zabbix/); ZabbixAPI normalizes it to .../api_jsonrpc.php and the view
+    URL is <web_base>/zabbix.php?action=dashboard.view&dashboardid=<id>.
+    """
+    enabled: bool = False
+    api_url: str = ""
+    user: str = ""
+    password: str = ""
+    hourly_name: str = "anomdec_detected"   # (a) anomdec-detect results
+    fast_name: str = "anomdec_fast"          # (b) anomdec-detect-fast results
+    widget_type: Literal["graph", "svggraph"] = "graph"  # svggraph for Zabbix 7.0+
+
+
 class LoggingConfig(BaseModel):
     enabled: bool = False
     level: str = "INFO"
@@ -205,6 +221,7 @@ class DataSourceConfig(BaseModel):
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []
     fast_detect: FastDetectConfig = FastDetectConfig()
+    dashboards: DashboardsConfig = DashboardsConfig()
 
     model_config = {"populate_by_name": True}
 
@@ -263,3 +280,4 @@ class AppConfig(BaseModel):
     item_filters: list[ItemFilterRule] = []
     anomaly_filters: list[AnomalyFilterRule] = []
     fast_detect: FastDetectConfig = FastDetectConfig()
+    dashboards: DashboardsConfig = DashboardsConfig()

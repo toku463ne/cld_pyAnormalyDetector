@@ -26,6 +26,8 @@ from ingestion.base import DataSource, ItemDetail
 from ingestion.factory import get_data_source
 from store.stats import HourStatsStore
 from clustering.dbscan import cluster_anomalies
+from tools._dashboard import build_pages, dashboard_url, pagedata_for_fast, publish
+from tools._zabbix import ZabbixAPI
 from detectors.fast import (
     build_short_stats,
     compute_severity,
@@ -141,7 +143,29 @@ class FastDetectionPipeline:
         events += event_only_events(host_weights, covered_hosts, fc.min_event_score)
         events.sort(key=lambda e: e["score"], reverse=True)
 
-        return _build_result(endep, events, suppressed, details)
+        result = _build_result(endep, events, suppressed, details)
+        result["dashboard_url"] = self._publish_fast_dashboard(ds_cfg, result["events"])
+        return result
+
+    def _publish_fast_dashboard(
+        self, ds_cfg: DataSourceConfig, events_json: list[dict]
+    ) -> str | None:
+        """Publish dashboard (b) of the triggered items; return its view URL.
+        Best-effort: a Zabbix API error never blocks the JSON the Zabbix item polls."""
+        dcfg = ds_cfg.dashboards
+        if not dcfg.enabled:
+            return None
+        pagedata = pagedata_for_fast(events_json)
+        if not pagedata:
+            return None
+        api_url = dcfg.api_url or ds_cfg.api_url
+        try:
+            zapi = ZabbixAPI(api_url, dcfg.user, dcfg.password)
+            did = publish(zapi, dcfg.fast_name, build_pages(pagedata, dcfg.widget_type))
+            return dashboard_url(api_url, did)
+        except Exception:
+            logger.warning("fast dashboard publish failed", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # I/O helpers
@@ -236,7 +260,8 @@ class FastDetectionPipeline:
 # ----------------------------------------------------------------------
 
 def _empty_result(endep: int) -> dict:
-    return {"ts": endep, "max_score": 0.0, "n_events": 0, "events": [], "suppressed": []}
+    return {"ts": endep, "max_score": 0.0, "n_events": 0, "events": [],
+            "suppressed": [], "dashboard_url": None}
 
 
 def _build_result(
@@ -279,6 +304,7 @@ def _build_result(
         "suppressed": [
             {"item_id": s["item_id"], "reason": s["reason"]} for s in suppressed
         ],
+        "dashboard_url": None,
     }
 
 

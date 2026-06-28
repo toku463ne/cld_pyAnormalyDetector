@@ -98,8 +98,10 @@ class ZabbixAPI:
     def delete_dashboard(self, dashboardid: str) -> None:
         self._call("dashboard.delete", [dashboardid])
 
-    def create_dashboard(self, name: str, pages: list[dict]) -> None:
-        self._call("dashboard.create", {"name": name, "pages": pages})
+    def create_dashboard(self, name: str, pages: list[dict]) -> str | None:
+        result = self._call("dashboard.create", {"name": name, "pages": pages})
+        ids = result.get("dashboardids") if isinstance(result, dict) else None
+        return str(ids[0]) if ids else None
 
     def update_dashboard(self, dashboardid: str, pages: list[dict]) -> None:
         self._call("dashboard.update", {"dashboardid": dashboardid, "pages": pages})
