@@ -1,11 +1,36 @@
 
 
-## Setup for DEV
+## Setup
+
+`scripts/setup.sh` provisions the management DB + account, installs the tools,
+and runs a health test.  It is idempotent — safe to re-run.
+
+```bash
+# Create role + anomdec DB, install tools, health-test.
+# Needs a PostgreSQL superuser; defaults to `sudo -u postgres`.
+ANOMDEC_DB_PASSWORD='choose-a-strong-password' \
+  ./scripts/setup.sh --with-test-db --write-secret secret.yml
+
+# Health test only (no install, no DB creation) — e.g. in CI or after a deploy:
+ANOMDEC_DB_PASSWORD=... ./scripts/setup.sh --check-only
+
+# See all options (env vars + flags):
+./scripts/setup.sh --help
 ```
-CREATE DATABASE anomdec_test;
+
+The health test (`scripts/healthcheck.py`, also runnable standalone) connects as
+the app user, creates the full store table set via the real code path — proving
+CREATE/ALTER privileges and that the `rescued` column migration applies — then
+drops it, and checks the CLI entrypoints.
+
+Copy `secret.example.yml`, fill in real values, and point the app at it:
+`export ANOMDEC_SECRET_PATH=/path/to/secret.yml` (or use `--write-secret`).
+
+If a superuser shell isn't available, the role/DB can be created by hand:
+```sql
 CREATE USER anomdec WITH PASSWORD 'anomdec_pass';
-GRANT ALL PRIVILEGES ON DATABASE anomdec_test TO anomdec;
-\c anomdec_test
+CREATE DATABASE anomdec OWNER anomdec;       -- and/or anomdec_test for tests
+\c anomdec
 GRANT ALL ON SCHEMA public TO anomdec;
 ```
 

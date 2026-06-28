@@ -220,3 +220,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# anomdec secrets — ignore real secret files, keep the committed template
+secret.yml
+secret*.yml
+!secret.example.yml
