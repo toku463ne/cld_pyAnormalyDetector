@@ -128,6 +128,13 @@ metric_categories:
       key_patterns: ["vfs.fs.*", "vfs.dev.*", "truenas.dataset.*"]
       weight: 0.5
       magnitude: {mode: relative, lo: 0.05, hi: 0.3}
+    # Catch-all: global relative-change floor for every uncategorised metric
+    # (mssql/mysql/vmware/system counters, etc.) == the old ignore_diff_rate.
+    # Must be LAST so specific categories win. Raise lo/hi to suppress more.
+    - name: default          # relative Δ floor (recent vs trend); ignore small changes
+      key_patterns: ["*"]
+      weight: 1.0
+      magnitude: {mode: relative, lo: 0.2, hi: 1.0}
 
 ##################################################
 #  item / anomaly filters (cascaded to data_sources)
