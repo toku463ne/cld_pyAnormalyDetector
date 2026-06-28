@@ -48,8 +48,8 @@ detectors:
     lambda_threshold: 3.0
 
 ensemble:
-  min_score: 0.5
-  require_any: 1             # at least N detectors must contribute
+  min_score: 0.7            # precision-first; raise toward 0.8 to suppress more
+  require_any: 2            # >=2 detectors must agree (cascade-like; cuts single-signal noise)
 
 ##################################################
 #  clustering (cascaded to data_sources)
@@ -134,7 +134,7 @@ metric_categories:
     - name: default          # relative Δ floor (recent vs trend); ignore small changes
       key_patterns: ["*"]
       weight: 1.0
-      magnitude: {mode: relative, lo: 0.2, hi: 1.0}
+      magnitude: {mode: relative, lo: 0.5, hi: 1.0}
 
 ##################################################
 #  item / anomaly filters (cascaded to data_sources)
