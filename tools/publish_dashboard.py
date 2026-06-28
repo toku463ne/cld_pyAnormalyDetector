@@ -54,6 +54,11 @@ def main() -> int:
         if not group_pd and not cluster_pd:
             logger.info("[%s] no anomalies to publish", ds_name)
             continue
+        # Custom widget headers ("host: key") so same-named items are distinct.
+        labels = {
+            int(r.itemid): f"{r.host_name}: {r.item_name}"
+            for r in df.itertuples(index=False)
+        }
         api_url = dcfg.api_url or ds_cfg.api_url
         try:
             zapi = ZabbixAPI(api_url, dcfg.user, dcfg.password)
@@ -68,7 +73,7 @@ def main() -> int:
             if not pagedata:
                 continue
             try:
-                pages = build_pages(pagedata, dcfg.widget_type)
+                pages = build_pages(pagedata, dcfg.widget_type, labels=labels)
                 did = publish(zapi, name, pages)
                 logger.info(
                     "[%s] published '%s' (%d pages) -> %s",

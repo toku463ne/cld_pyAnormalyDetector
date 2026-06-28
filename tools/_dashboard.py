@@ -19,9 +19,10 @@ _WIDGET_W = 15
 _WIDGET_H = 5
 
 
-def _make_widget(itemid: int, col: int, row: int, widget_type: str) -> dict:
+def _make_widget(itemid: int, col: int, row: int, widget_type: str, header: str = "") -> dict:
     return {
         "type": "svggraph" if widget_type == "svggraph" else "graph",
+        "name": header,            # widget header; "" => Zabbix shows the item's own name
         "x": col * _WIDGET_W,
         "y": row * _WIDGET_H,
         "width": _WIDGET_W,
@@ -37,14 +38,18 @@ def _make_widget(itemid: int, col: int, row: int, widget_type: str) -> dict:
 def build_pages(
     pagedata: dict[str, list[int]],
     widget_type: str = "graph",
+    labels: dict[int, str] | None = None,
     ncols: int = _NCOLS,
     nrows: int = _NROWS,
 ) -> list[dict]:
     """Build Zabbix dashboard pages from {page_name: [itemid, ...]}.
 
     Each page holds at most ncols*nrows graph widgets; overflow wraps to
-    `<name>_<n>` pages (matching the old behaviour).
+    `<name>_<n>` pages (matching the old behaviour).  `labels` maps itemid -> a
+    custom widget header so items that share a Zabbix display name (e.g. two
+    "cdr delay max" on different keys) are distinguishable.
     """
+    labels = labels or {}
     per_page = ncols * nrows
     pages: list[dict] = []
     for name, item_ids in pagedata.items():
@@ -54,7 +59,7 @@ def build_pages(
         for chunk_idx, start in enumerate(range(0, len(ids), per_page), start=1):
             chunk = ids[start : start + per_page]
             widgets = [
-                _make_widget(iid, pos % ncols, pos // ncols, widget_type)
+                _make_widget(iid, pos % ncols, pos // ncols, widget_type, labels.get(iid, ""))
                 for pos, iid in enumerate(chunk)
             ]
             pages.append({"name": f"{name}_{chunk_idx}", "widgets": widgets})

@@ -84,6 +84,13 @@ def test_build_pages_widget_coords_and_fields():
     assert itemid_field["value"] == 101
 
 
+def test_build_pages_sets_custom_header():
+    pages = build_pages({"A": [1, 2]}, labels={1: "sug-cdr: cdr_delay.sbc011"})
+    w = pages[0]["widgets"]
+    assert w[0]["name"] == "sug-cdr: cdr_delay.sbc011"   # distinguishing header
+    assert w[1]["name"] == ""                             # unlabeled -> default title
+
+
 def test_build_pages_svggraph_type():
     pages = build_pages({"A": [1]}, widget_type="svggraph")
     assert pages[0]["widgets"][0]["type"] == "svggraph"

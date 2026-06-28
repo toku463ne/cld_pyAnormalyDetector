@@ -158,10 +158,14 @@ class FastDetectionPipeline:
         pagedata = pagedata_for_fast(events_json)
         if not pagedata:
             return None
+        labels = {
+            int(it["item_id"]): f"{it.get('host', '')}: {it.get('key', '')}"
+            for ev in events_json for it in ev.get("items", []) if "item_id" in it
+        }
         api_url = dcfg.api_url or ds_cfg.api_url
         try:
             zapi = ZabbixAPI(api_url, dcfg.user, dcfg.password)
-            did = publish(zapi, dcfg.fast_name, build_pages(pagedata, dcfg.widget_type))
+            did = publish(zapi, dcfg.fast_name, build_pages(pagedata, dcfg.widget_type, labels=labels))
             return dashboard_url(api_url, did)
         except Exception:
             logger.warning("fast dashboard publish failed", exc_info=True)
