@@ -48,9 +48,13 @@ def cluster_anomalies(
     if len(item_ids) < 2:
         return {i: -1 for i in item_ids}
 
-    # Stage 1 uses history only (anomaly window)
+    # Stage 1 uses history only (anomaly window).
+    # NOTE: `present` MUST follow jaccard_charts key order — the distance matrix
+    # (and thus db1.labels_) is built from list(jaccard_charts.keys()).  Using a
+    # different order (e.g. item_ids) here misattributes cluster labels to the
+    # wrong items.
     jaccard_charts = _build_charts(history_df, item_ids)
-    present = [i for i in item_ids if i in jaccard_charts]
+    present = list(jaccard_charts.keys())
     if len(present) < 2:
         return {i: -1 for i in item_ids}
 
