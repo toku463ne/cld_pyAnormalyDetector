@@ -1,17 +1,22 @@
 """
-2-stage DBSCAN clustering for anomalous items.
+Correlation-based DBSCAN clustering for anomalous items.
 
-Stage 1 — Jaccard distance on anomaly timestamps:
-  Items that were anomalous at overlapping times cluster together.
+Items whose time-series *shapes co-move* belong to the same incident.  Each item
+is resampled onto a common clock grid (so different collection periods align),
+its first differences are correlated against the others (so a shared slow drift
+doesn't make unrelated items look alike), and DBSCAN groups items whose
+correlation distance is within corr_eps.
 
-Stage 2 — Correlation distance within each Jaccard cluster:
-  Items whose time-series shapes correlate further sub-cluster.
+History note: this used to be a 2-stage Jaccard-then-correlation pipeline, but the
+Stage-1 Jaccard (overlap of threshold-crossing timestamps) was fragile — sparse
+spikes vanish under resampling, so it blocked genuinely co-moving items (e.g. two
+"cdr delay max" on different keys, or cps/cc incoming) from ever reaching the
+correlation stage.  Correlation alone is the reliable signal.
 
 The result is a dict[item_id → cluster_id] where cluster_id == -1 means noise.
 """
 from __future__ import annotations
 import logging
-from itertools import combinations
 
 import numpy as np
 import pandas as pd
@@ -32,14 +37,13 @@ def cluster_anomalies(
     """
     Parameters
     ----------
-    history_df   : itemid, clock, value  (recent history for clustering period)
-    trends_stats : itemid, mean, std  (used to normalise Jaccard anomaly masks)
+    history_df   : itemid, clock, value  (recent history for the clustering period)
+    trends_stats : itemid, mean, std  (unused; kept for signature compatibility)
     item_ids     : items to cluster
-    cfg          : ClusteringConfig
-    trends_df    : itemid, clock, value_avg  (longer pre-anomaly window).
-                   When provided, Stage 2 correlation uses trends + history
-                   concatenated so the *shape before and through the anomaly*
-                   is captured, not just the spike in isolation.
+    cfg          : ClusteringConfig (corr_eps, min_samples)
+    trends_df    : itemid, clock, value_avg  (longer pre-anomaly window).  When
+                   provided it is prepended to history so the correlation captures
+                   the shape *before and through* the anomaly, not just the spike.
 
     Returns
     -------
@@ -48,61 +52,27 @@ def cluster_anomalies(
     if len(item_ids) < 2:
         return {i: -1 for i in item_ids}
 
-    # Stage 1 uses history only (anomaly window).
-    # NOTE: `present` MUST follow jaccard_charts key order — the distance matrix
-    # (and thus db1.labels_) is built from list(jaccard_charts.keys()).  Using a
-    # different order (e.g. item_ids) here misattributes cluster labels to the
-    # wrong items.
-    jaccard_charts = _build_charts(history_df, item_ids)
-    present = list(jaccard_charts.keys())
+    # Build time-normalized charts (trends+history); correlation is on first
+    # differences (see _correlation_distance_matrix).
+    charts = _build_corr_charts(history_df, trends_df, item_ids)
+    # `present` MUST follow chart key order — the distance matrix (and thus
+    # db.labels_) is built from list(charts.keys()); a different order here
+    # misattributes labels to the wrong items.
+    present = list(charts.keys())
     if len(present) < 2:
         return {i: -1 for i in item_ids}
 
-    chart_stats = _build_chart_stats(trends_stats, present)
+    corr_mat = _correlation_distance_matrix(charts)
+    corr_mat = _normalise(corr_mat)
+    np.fill_diagonal(corr_mat, 0.0)
 
-    # Stage 1: Jaccard on anomaly timestamps
-    jaccard_mat = _jaccard_distance_matrix(jaccard_charts, chart_stats, cfg.sigma)
-    jaccard_mat = _normalise(jaccard_mat)
-    np.fill_diagonal(jaccard_mat, 0.0)
+    db = DBSCAN(
+        eps=cfg.corr_eps, min_samples=cfg.min_samples, metric="precomputed"
+    ).fit(corr_mat)
 
-    db1 = DBSCAN(
-        eps=cfg.jaccard_eps, min_samples=cfg.min_samples, metric="precomputed"
-    ).fit(jaccard_mat)
-
-    clusters: dict[int, int] = {item_id: int(label) for item_id, label in zip(present, db1.labels_)}
-
-    # Stage 2 uses trends + history to capture pre-anomaly shape
-    corr_charts = _build_corr_charts(history_df, trends_df, item_ids)
-
-    # Stage 2: Correlation within each Jaccard cluster
-    groups: dict[int, list[int]] = {}
-    for item_id, label in clusters.items():
-        if label >= 0:
-            groups.setdefault(label, []).append(item_id)
-
-    max_label = max(clusters.values(), default=-1)
-    for label, group in groups.items():
-        if len(group) < 2:
-            continue
-        group_charts = {i: corr_charts[i] for i in group if i in corr_charts}
-        if len(group_charts) < 2:
-            continue
-        corr_mat = _correlation_distance_matrix(group_charts)
-        corr_mat = _normalise(corr_mat)
-        np.fill_diagonal(corr_mat, 0.0)
-
-        db2 = DBSCAN(
-            eps=cfg.corr_eps, min_samples=cfg.min_samples, metric="precomputed"
-        ).fit(corr_mat)
-
-        for item_id, sub_label in zip(group_charts.keys(), db2.labels_):
-            if sub_label == -1:
-                clusters[item_id] = -1
-            else:
-                clusters[item_id] = max_label + sub_label + 1
-        max_label = max(clusters.values(), default=max_label)
-
-    # Fill missing items as noise
+    clusters: dict[int, int] = {
+        item_id: int(label) for item_id, label in zip(present, db.labels_)
+    }
     for i in item_ids:
         clusters.setdefault(i, -1)
 
@@ -188,54 +158,6 @@ def _build_charts(
     return charts
 
 
-def _build_chart_stats(
-    trends_stats: pd.DataFrame, item_ids: list[int]
-) -> dict[int, dict[str, float]]:
-    stats: dict[int, dict[str, float]] = {}
-    if trends_stats.empty:
-        return stats
-    sub = trends_stats[trends_stats["itemid"].isin(item_ids)]
-    for row in sub.itertuples(index=False):
-        stats[int(row.itemid)] = {"mean": float(row.mean), "std": float(row.std)}
-    return stats
-
-
-def _anomaly_mask(series: pd.Series, mean: float, std: float, sigma: float) -> pd.Series:
-    """Boolean mask of anomalous timestamps (above sigma-band)."""
-    if std <= 0:
-        return pd.Series([False] * len(series))
-    return (series - mean).abs() > sigma * std
-
-
-def _jaccard(mask_a: pd.Series, mask_b: pd.Series) -> float:
-    intersection = (mask_a & mask_b).sum()
-    union = (mask_a | mask_b).sum()
-    return 1.0 - (intersection / union) if union > 0 else 1.0
-
-
-def _jaccard_distance_matrix(
-    charts: dict[int, pd.Series],
-    chart_stats: dict[int, dict[str, float]],
-    sigma: float,
-) -> np.ndarray:
-    item_ids = list(charts.keys())
-    n = len(item_ids)
-    mat = np.ones((n, n))
-    masks: dict[int, pd.Series] = {}
-    for i, item_id in enumerate(item_ids):
-        st = chart_stats.get(item_id, {"mean": 0.0, "std": 0.0})
-        masks[item_id] = _anomaly_mask(charts[item_id], st["mean"], st["std"], sigma)
-
-    for i, a in enumerate(item_ids):
-        mat[i, i] = 0.0
-        for j, b in enumerate(item_ids):
-            if j <= i:
-                continue
-            d = _jaccard(masks[a], masks[b])
-            mat[i, j] = mat[j, i] = d
-    return mat
-
-
 def _correlation_distance_matrix(charts: dict[int, pd.Series]) -> np.ndarray:
     item_ids = list(charts.keys())
     n = len(item_ids)
@@ -252,14 +174,17 @@ def _correlation_distance_matrix(charts: dict[int, pd.Series]) -> np.ndarray:
         aligned = np.diff(aligned, axis=1)
 
     mat = np.ones((n, n))
-    for i in range(n):
-        mat[i, i] = 0.0
-        for j in range(i + 1, n):
-            corr = np.corrcoef(aligned[i], aligned[j])[0, 1]
-            if np.isnan(corr):
-                corr = 0.0
-            dist = (1.0 - corr) / 2.0  # map [-1,1] → [1,0]
-            mat[i, j] = mat[j, i] = dist
+    # A flat (zero-variance) series makes corrcoef emit invalid/divide warnings
+    # and return NaN; we map that to 0 correlation, so silence the warnings.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for i in range(n):
+            mat[i, i] = 0.0
+            for j in range(i + 1, n):
+                corr = np.corrcoef(aligned[i], aligned[j])[0, 1]
+                if np.isnan(corr):
+                    corr = 0.0
+                dist = (1.0 - corr) / 2.0  # map [-1,1] → [1,0]
+                mat[i, j] = mat[j, i] = dist
     return mat
 
 
