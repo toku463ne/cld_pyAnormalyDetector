@@ -136,12 +136,51 @@ def _build_corr_charts(
     return _build_charts(combined, item_ids)
 
 
-def _build_charts(history_df: pd.DataFrame, item_ids: list[int]) -> dict[int, pd.Series]:
+def _infer_unitsecs(df: pd.DataFrame, fallback: int = 600) -> int:
+    """Coarsest typical sampling interval across items (max of per-item median
+    clock gap), so every series can be resampled onto one grid without upsampling
+    beyond any item's real resolution."""
+    med = (
+        df.sort_values(["itemid", "clock"])
+        .groupby("itemid")["clock"]
+        .apply(lambda c: c.diff().median())
+        .dropna()
+    )
+    if med.empty:
+        return fallback
+    u = int(med.max())
+    return u if u > 0 else fallback
+
+
+def _build_charts(
+    history_df: pd.DataFrame, item_ids: list[int], unitsecs: int | None = None
+) -> dict[int, pd.Series]:
+    """Resample each item onto a common clock grid so series are time-aligned and
+    equal-length (port of the old fit_to_base_clocks).  Without this, items with
+    different collection periods (e.g. 60s vs 600s) were compared position-by-
+    position — i.e. different wall-clock times — corrupting both the Jaccard masks
+    and the correlation.  Values are bucketed to `unitsecs`, averaged within a
+    bucket, reindexed onto the full grid and interpolated across gaps.
+    """
+    if history_df is None or history_df.empty:
+        return {}
+    sub = history_df[history_df["itemid"].isin(item_ids)]
+    if sub.empty:
+        return {}
+    if unitsecs is None:
+        unitsecs = _infer_unitsecs(sub)
+    work = sub.assign(_b=(sub["clock"] // unitsecs).astype("int64"))
+    grid = list(range(int(work["_b"].min()), int(work["_b"].max()) + 1))
+
     charts: dict[int, pd.Series] = {}
-    for item_id in item_ids:
-        sub = history_df[history_df["itemid"] == item_id].sort_values("clock")
-        if not sub.empty:
-            charts[item_id] = sub["value"].reset_index(drop=True)
+    for item_id, g in work.groupby("itemid"):
+        s = (
+            g.groupby("_b")["value"].mean()
+            .reindex(grid)
+            .interpolate(limit_direction="both")
+        )
+        if s.notna().any():
+            charts[int(item_id)] = s.reset_index(drop=True)
     return charts
 
 
