@@ -189,3 +189,47 @@ def _series(df: pd.DataFrame, col: str) -> pd.Series:
     if df is None or df.empty or col not in df.columns:
         return pd.Series(dtype=float)
     return df.set_index("itemid")[col]
+
+
+def magnitude_suppressed(
+    scores: list[AnomalyScore], min_score: float
+) -> list[AnomalyScore]:
+    """Items the *magnitude* gate alone kept below threshold.
+
+    A candidate for incident rescue is a non-anomaly whose detectors fired
+    (raw_score >= min_score) and which would have passed on category weight and
+    duration alone (raw_score * gate_weight * dur_scale >= min_score) but was
+    pushed under by magnitude (mag_scale < 1).  Reads the multipliers recorded in
+    `features` by apply_gates.
+    """
+    out: list[AnomalyScore] = []
+    for s in scores:
+        if s.is_anomaly:
+            continue
+        f = s.features
+        raw = f.get("raw_score")
+        if raw is None or raw < min_score:
+            continue
+        mag = f.get("mag_scale", 1.0)
+        weight = f.get("gate_weight", 1.0)
+        dur = f.get("dur_scale", 1.0)
+        if mag < 1.0 and raw * weight * dur >= min_score:
+            out.append(s)
+    return out
+
+
+def select_rescued(
+    candidates: list[AnomalyScore],
+    clusters: dict[int, int],
+    confirmed_ids: list[int],
+) -> list[AnomalyScore]:
+    """Return candidates that share a (non-noise) cluster with a confirmed item."""
+    confirmed_clusters = {
+        clusters.get(i, -1) for i in confirmed_ids if clusters.get(i, -1) >= 0
+    }
+    rescued: list[AnomalyScore] = []
+    for c in candidates:
+        cid = clusters.get(c.item_id, -1)
+        if cid >= 0 and cid in confirmed_clusters:
+            rescued.append(c)
+    return rescued

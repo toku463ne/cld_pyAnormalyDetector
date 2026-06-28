@@ -14,7 +14,9 @@ from features.gating import (
     classify,
     duration_scale,
     magnitude_scale,
+    magnitude_suppressed,
     ramp,
+    select_rescued,
 )
 
 
@@ -196,3 +198,48 @@ def test_apply_gates_duration_suppresses_short_lived():
     )
     assert out[0].features["dur_scale"] == 0.0
     assert out[0].is_anomaly is False
+
+
+# ----------------------------------------------------------------------
+# magnitude rescue (same-incident)
+# ----------------------------------------------------------------------
+
+def _gated(item_id, *, is_anomaly, raw, weight=1.0, mag=1.0, dur=1.0):
+    eff = raw * weight * mag * dur
+    return AnomalyScore(
+        item_id=item_id,
+        score=eff,
+        is_anomaly=is_anomaly,
+        features={
+            "raw_score": raw,
+            "gate_weight": weight,
+            "mag_scale": mag,
+            "dur_scale": dur,
+        },
+    )
+
+
+def test_magnitude_suppressed_isolates_magnitude():
+    scores = [
+        _gated(1, is_anomaly=True, raw=0.9),                       # confirmed
+        _gated(2, is_anomaly=False, raw=0.9, mag=0.0),            # killed by magnitude -> candidate
+        _gated(3, is_anomaly=False, raw=0.9, weight=0.2),        # killed by category weight, not magnitude
+        _gated(4, is_anomaly=False, raw=0.3),                    # detectors didn't fire
+        _gated(5, is_anomaly=False, raw=0.9, dur=0.0),           # killed by duration, not magnitude
+    ]
+    out = magnitude_suppressed(scores, min_score=0.5)
+    assert [s.item_id for s in out] == [2]
+
+
+def test_select_rescued_requires_shared_confirmed_cluster():
+    candidates = [_gated(2, is_anomaly=False, raw=0.9, mag=0.0),
+                  _gated(7, is_anomaly=False, raw=0.9, mag=0.0)]
+    clusters = {1: 0, 2: 0, 7: 3}   # item 2 shares cluster 0 with confirmed item 1; 7 is alone
+    rescued = select_rescued(candidates, clusters, confirmed_ids=[1])
+    assert [s.item_id for s in rescued] == [2]
+
+
+def test_select_rescued_ignores_noise_cluster():
+    candidates = [_gated(2, is_anomaly=False, raw=0.9, mag=0.0)]
+    clusters = {1: -1, 2: -1}       # both noise -> nothing to rescue
+    assert select_rescued(candidates, clusters, confirmed_ids=[1]) == []

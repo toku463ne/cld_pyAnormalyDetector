@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _HIST_COLS = ["itemid", "clock", "value"]
 _TRENDS_COLS = ["itemid", "clock", "value_min", "value_avg", "value_max"]
+_EVENT_COLS = ["clock", "host_name", "severity", "name"]
 
 
 class ZabbixPsqlSource:
@@ -137,6 +138,38 @@ class ZabbixPsqlSource:
             return pd.DataFrame(columns=_TRENDS_COLS)
         df.columns = _TRENDS_COLS
         return df.sort_values(["itemid", "clock"]).reset_index(drop=True)
+
+    def get_events(
+        self, startep: int, endep: int, host_names: list[str] | None = None
+    ) -> pd.DataFrame:
+        host_filter = ""
+        if host_names:
+            conds = []
+            for n in host_names:
+                like = n.replace("*", "%")
+                if "%" in like:
+                    conds.append(f"hosts.host LIKE '{like}'")
+                else:
+                    conds.append(f"hosts.host = '{n}'")
+            host_filter = "AND (" + " OR ".join(conds) + ")"
+        # DISTINCT on eventid collapses the functions fan-out (a trigger may bind
+        # several item functions, each producing a join row for the same event).
+        sql = f"""
+            SELECT DISTINCT events.eventid, events.clock, hosts.host,
+                   events.severity, events.name
+            FROM events
+            JOIN triggers ON events.objectid = triggers.triggerid
+            JOIN functions ON functions.triggerid = triggers.triggerid
+            JOIN items ON items.itemid = functions.itemid
+            JOIN hosts ON hosts.hostid = items.hostid
+            WHERE events.source = 0 AND events.object = 0 AND events.value = 1
+              AND events.clock BETWEEN {int(startep)} AND {int(endep)} {host_filter}
+        """
+        df = self._db.read_sql(sql)
+        if df.empty:
+            return pd.DataFrame(columns=_EVENT_COLS)
+        df.columns = ["eventid", "clock", "host_name", "severity", "name"]
+        return df[_EVENT_COLS]
 
     def get_item_html_link(self, item_id: int) -> str:
         return f"{self._api_url}/history.php?itemids%5B0%5D={item_id}&period=now-730h"

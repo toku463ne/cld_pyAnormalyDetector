@@ -44,3 +44,13 @@ class DataSource(Protocol):
     ) -> pd.DataFrame:
         """Returns DataFrame with columns: itemid, clock, value_min, value_avg, value_max (sorted)."""
         ...
+
+    def get_events(
+        self, startep: int, endep: int, host_names: list[str] | None = None
+    ) -> pd.DataFrame:
+        """Active PROBLEM events in the window, attributed to hosts.
+
+        Returns DataFrame with columns: clock, host_name, severity, name.
+        host_names accepts fnmatch globs; None means all hosts.
+        """
+        ...

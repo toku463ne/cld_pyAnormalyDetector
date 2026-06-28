@@ -12,6 +12,7 @@ class AnomalyScore:
     is_anomaly: bool                            # score >= threshold
     detector_scores: dict[str, float] = field(default_factory=dict)
     features: dict[str, float] = field(default_factory=dict)
+    rescued: bool = False                       # pulled back into a confirmed incident
 
 
 @runtime_checkable

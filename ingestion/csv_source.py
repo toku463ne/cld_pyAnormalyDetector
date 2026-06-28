@@ -1,4 +1,5 @@
 from __future__ import annotations
+from fnmatch import fnmatch
 import os
 import logging
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 _HIST_COLS = ["itemid", "clock", "value"]
 _TRENDS_COLS = ["itemid", "clock", "value_min", "value_avg", "value_max"]
 _ITEMS_COLS = ["group_name", "hostid", "host_name", "itemid", "item_name"]
+_EVENT_COLS = ["clock", "host_name", "severity", "name"]
 
 
 class CsvSource:
@@ -105,3 +107,25 @@ class CsvSource:
         if item_ids:
             df = df[df["itemid"].isin(item_ids)]
         return df.sort_values(["itemid", "clock"]).reset_index(drop=True)
+
+    def get_events(
+        self, startep: int, endep: int, host_names: list[str] | None = None
+    ) -> pd.DataFrame:
+        """Read an optional events.csv.gz fixture (columns: clock, host_name,
+        severity, name).  Returns an empty frame when absent, so offline runs and
+        unit tests stay DB-free."""
+        path = os.path.join(self._dir, "events.csv.gz")
+        if not os.path.isfile(path):
+            return pd.DataFrame(columns=_EVENT_COLS)
+        df = pd.read_csv(path, compression="gzip", header=0, names=_EVENT_COLS)
+        df["clock"] = pd.to_numeric(df["clock"], errors="coerce")
+        df = df.dropna(subset=["clock"])
+        df["clock"] = df["clock"].astype(int)
+        df["severity"] = pd.to_numeric(df["severity"], errors="coerce").fillna(0).astype(int)
+        df = df[(df["clock"] >= startep) & (df["clock"] <= endep)]
+        if host_names:
+            mask = pd.Series(False, index=df.index)
+            for n in host_names:
+                mask |= df["host_name"].apply(lambda h: fnmatch(str(h), n))
+            df = df[mask]
+        return df.reset_index(drop=True)

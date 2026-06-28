@@ -18,6 +18,7 @@ class AnomaliesStore(BaseStore):
             trend_std       DOUBLE PRECISION,
             score           FLOAT,
             detector_scores JSONB,
+            rescued         BOOLEAN DEFAULT FALSE,
             PRIMARY KEY (itemid, created, group_name)
         )
     """
@@ -25,18 +26,27 @@ class AnomaliesStore(BaseStore):
     def _table_suffix(self) -> str:
         return "anomalies"
 
+    def _ensure_table(self) -> None:
+        super()._ensure_table()
+        # Idempotent migration for tables created before the rescued column existed.
+        self._db.exec_sql(
+            f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS rescued BOOLEAN DEFAULT FALSE"
+        )
+
     def insert(self, df: pd.DataFrame) -> None:
         """df columns: itemid, created, group_name, hostid, host_name, item_name,
-           trend_mean, trend_std, score, detector_scores (dict)."""
+           trend_mean, trend_std, score, detector_scores (dict), rescued (bool)."""
         if df.empty:
             return
+        has_rescued = "rescued" in df.columns
         for row in df.itertuples(index=False):
             det_scores = json.dumps(row.detector_scores) if isinstance(row.detector_scores, dict) else row.detector_scores
+            rescued = bool(getattr(row, "rescued", False)) if has_rescued else False
             self._db.exec_sql(
                 f"""INSERT INTO {self._table}
                     (itemid, created, group_name, hostid, host_name, item_name,
-                     trend_mean, trend_std, score, detector_scores)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     trend_mean, trend_std, score, detector_scores, rescued)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (itemid, created, group_name) DO UPDATE SET
                         hostid = EXCLUDED.hostid,
                         host_name = EXCLUDED.host_name,
@@ -44,7 +54,8 @@ class AnomaliesStore(BaseStore):
                         trend_mean = EXCLUDED.trend_mean,
                         trend_std  = EXCLUDED.trend_std,
                         score      = EXCLUDED.score,
-                        detector_scores = EXCLUDED.detector_scores
+                        detector_scores = EXCLUDED.detector_scores,
+                        rescued    = EXCLUDED.rescued
                 """,
                 (
                     int(row.itemid),
@@ -57,6 +68,7 @@ class AnomaliesStore(BaseStore):
                     float(row.trend_std) if not pd.isna(row.trend_std) else 0.0,
                     float(row.score),
                     det_scores,
+                    rescued,
                 ),
             )
 

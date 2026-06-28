@@ -29,6 +29,8 @@ from clustering.dbscan import cluster_anomalies
 from detectors.fast import (
     build_short_stats,
     compute_severity,
+    event_only_events,
+    host_event_weights,
     score_events,
     seasonal_veto,
 )
@@ -119,10 +121,26 @@ class FastDetectionPipeline:
                 ds_cfg.clustering,
             )
 
-        events = score_events(triggered, clusters)
         details = self._fetch_details(
             src, [s.item_id for s in triggered], ds_cfg.batch_size
         )
+        item_host = {iid: d.host_name for iid, d in details.items()}
+
+        # Zabbix events: severity-weighted, matched by host (corroborate + own score)
+        host_weights: dict[str, float] = {}
+        if fc.use_zabbix_events:
+            ev_window = fc.events_window_secs or fc.history_span_secs
+            host_patterns = [r.host_pattern for r in fc.watch if r.host_pattern] or None
+            events_df = src.get_events(
+                endep - ev_window, endep, host_names=host_patterns
+            )
+            host_weights = host_event_weights(events_df, fc.events_saturation)
+
+        events = score_events(triggered, clusters, item_host, host_weights)
+        covered_hosts = {item_host.get(s.item_id, "") for s in triggered}
+        events += event_only_events(host_weights, covered_hosts, fc.min_event_score)
+        events.sort(key=lambda e: e["score"], reverse=True)
+
         return _build_result(endep, events, suppressed, details)
 
     # ------------------------------------------------------------------
@@ -241,15 +259,17 @@ def _build_result(
                     "recent_mean": m.features.get("h_mean"),
                 }
             )
-        events_json.append(
-            {
-                "score": round(e["score"], 4),
-                "n_items": e["n_items"],
-                "cluster": e["cluster"],
-                "reason": e["reason"],
-                "items": items,
-            }
-        )
+        entry = {
+            "score": round(e["score"], 4),
+            "n_items": e["n_items"],
+            "cluster": e["cluster"],
+            "reason": e["reason"],
+            "zabbix_boost": e.get("zabbix_boost", 0.0),
+            "items": items,
+        }
+        if "host" in e:  # standalone zabbix_events entry
+            entry["host"] = e["host"]
+        events_json.append(entry)
     max_score = max((e["score"] for e in events), default=0.0)
     return {
         "ts": endep,

@@ -7,6 +7,8 @@ from detectors.base import AnomalyScore
 from detectors.fast import (
     build_short_stats,
     compute_severity,
+    event_only_events,
+    host_event_weights,
     score_events,
     seasonal_veto,
 )
@@ -162,3 +164,47 @@ def test_build_result_shape():
 def test_empty_result_shape():
     r = _empty_result(123)
     assert r == {"ts": 123, "max_score": 0.0, "n_events": 0, "events": [], "suppressed": []}
+
+
+# ----------------------------------------------------------------------
+# Zabbix events folded into the fast score
+# ----------------------------------------------------------------------
+
+def _events(rows):
+    return pd.DataFrame(rows, columns=["clock", "host_name", "severity", "name"])
+
+
+def test_host_event_weights_saturate_with_severity():
+    one = host_event_weights(_events([(1, "h1", 5, "x")]), saturation=3.0)
+    three = host_event_weights(
+        _events([(1, "h1", 5, "x"), (2, "h1", 5, "y"), (3, "h1", 5, "z")]), 3.0
+    )
+    assert 0 < one["h1"] < three["h1"] < 1.0
+    # low severity contributes little
+    low = host_event_weights(_events([(1, "h2", 1, "x")]), 3.0)
+    assert low["h2"] < one["h1"]
+
+
+def test_host_event_weights_empty():
+    assert host_event_weights(_events([]), 3.0) == {}
+
+
+def test_events_boost_cooccurrence_score():
+    members = [_score(1, 0.5, 0.0), _score(2, 0.5, 0.0)]
+    clusters = {1: 0, 2: 0}
+    item_host = {1: "h1", 2: "h1"}
+    base = score_events(members, clusters)[0]["score"]
+    boosted = score_events(members, clusters, item_host, {"h1": 0.6})[0]
+    assert boosted["score"] > base
+    assert boosted["zabbix_boost"] == pytest.approx(0.6)
+    # noisy-OR: 1 - (1-0.5)(1-0.5)(1-0.6)
+    assert boosted["score"] == pytest.approx(1 - 0.5 * 0.5 * 0.4)
+
+
+def test_event_only_events_standalone_and_covered():
+    hew = {"h1": 0.8, "h2": 0.3, "h3": 0.9}
+    out = event_only_events(hew, covered_hosts={"h3"}, min_event_score=0.5)
+    # h1 qualifies; h2 below threshold; h3 already covered by a metric event
+    assert [e["host"] for e in out] == ["h1"]
+    assert out[0]["reason"] == "zabbix_events"
+    assert out[0]["n_items"] == 0

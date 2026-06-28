@@ -29,7 +29,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.ensemble import EnsembleDetector
 from detectors.base import AnomalyScore
 from clustering.dbscan import cluster_anomalies
-from features.gating import apply_gates
+from features.gating import apply_gates, magnitude_suppressed, select_rescued
 from pipeline.filters import apply_item_filters, apply_anomaly_filters
 
 logger = logging.getLogger(__name__)
@@ -147,18 +147,39 @@ class DetectionPipeline:
         anomaly_scores = [s for s in final_scores if s.is_anomaly]
         if not anomaly_scores:
             return []
+        confirmed_ids = [s.item_id for s in anomaly_scores]
 
-        # --- Step 6: persist + cluster ---
-        anomaly_ids = [s.item_id for s in anomaly_scores]
+        # --- Step 6: cluster, rescuing magnitude-suppressed same-incident items ---
+        candidates = (
+            magnitude_suppressed(final_scores, ds_cfg.ensemble.min_score)
+            if ds_cfg.clustering.rescue_same_incident
+            else []
+        )
+        # Cluster the union so a suppressed candidate can be matched to a confirmed
+        # incident; rescue any candidate sharing a cluster with a confirmed item.
+        union_ids = confirmed_ids + [c.item_id for c in candidates]
+        clusters = self._cluster(src, hist_store, trends_stats, ds_cfg, union_ids, endep)
+
+        rescued = select_rescued(candidates, clusters, confirmed_ids)
+        for s in rescued:
+            s.rescued = True
+        if rescued:
+            logger.info(
+                "[%s] rescued %d magnitude-suppressed item(s) into confirmed incidents",
+                ds_name, len(rescued),
+            )
+
+        all_anomalies = anomaly_scores + rescued
+        all_ids = [s.item_id for s in all_anomalies]
+
+        # --- Step 7: persist + assign cluster ids ---
         self._write_anomalies(
-            src, anomaly_store, trends_stats, ds_name, anomaly_scores, endep, ds_cfg
+            src, anomaly_store, trends_stats, ds_name, all_anomalies, endep, ds_cfg
         )
-        self._cluster_and_update(
-            src, hist_store, trends_stats, anomaly_store, ds_cfg, anomaly_ids, endep
-        )
+        anomaly_store.update_cluster_ids({i: clusters.get(i, -1) for i in all_ids})
         anomaly_store.delete_before(endep - ds_cfg.anomaly_keep_secs)
 
-        return anomaly_ids
+        return all_ids
 
     # ------------------------------------------------------------------
     # Helpers
@@ -322,27 +343,39 @@ class DetectionPipeline:
                 "trend_std": t_std,
                 "score": s.score,
                 "detector_scores": s.detector_scores,
+                "rescued": s.rescued,
             })
         if rows:
             import pandas as pd
             anomaly_store.insert(pd.DataFrame(rows))
 
-    def _cluster_and_update(
+    def _cluster(
         self,
         src: DataSource,
         hist_store: HistoryStore,
         trends_stats: pd.DataFrame,
-        anomaly_store: AnomaliesStore,
         ds_cfg: DataSourceConfig,
         item_ids: list[int],
         endep: int,
-    ) -> None:
+    ) -> dict[int, int]:
+        """Cluster the given items, returning {item_id -> cluster_id} (-1 = noise).
+
+        Ensures history is cached for every item first — rescue candidates may not
+        have been fetched by the changepoint/gating steps — so confirmed and
+        candidate items are clustered on equal footing.
+        """
         if len(item_ids) < 2:
-            return
+            return {i: -1 for i in item_ids}
         startep = endep - ds_cfg.clustering.detection_period
+
         history_df = hist_store.get(item_ids, startep=startep, endep=endep)
+        have = set(history_df["itemid"].unique()) if not history_df.empty else set()
+        missing = [i for i in item_ids if i not in have]
+        if missing:
+            self._fetch_history_for_changepoint(src, hist_store, ds_cfg, missing, endep)
+            history_df = hist_store.get(item_ids, startep=startep, endep=endep)
         if history_df.empty:
-            return
+            return {i: -1 for i in item_ids}
 
         # Fetch pre-anomaly trends for Stage 2 shape correlation.
         # Window: from trends_retention days ago up to the clustering startep,
@@ -350,7 +383,6 @@ class DetectionPipeline:
         trends_lookback = endep - ds_cfg.trends_retention * 86400
         trends_df = src.get_trends(trends_lookback, startep - 1, item_ids)
 
-        clusters = cluster_anomalies(
+        return cluster_anomalies(
             history_df, trends_stats, item_ids, ds_cfg.clustering, trends_df=trends_df
         )
-        anomaly_store.update_cluster_ids(clusters)

@@ -178,6 +178,10 @@ metric_categories:
 #   seasonal_veto: true                 # drop levels expected for this hour-of-day
 #   seasonal_lambda: 3.0
 #   cooccur: true                       # group co-triggers (noisy-OR boosts score)
+#   use_zabbix_events: true             # fold severity-weighted Zabbix events into the score
+#   events_window_secs: 0               # 0 = reuse history_span_secs
+#   events_saturation: 3.0              # sum(severity/5) mapping to ~full host weight
+#   min_event_score: 0.5                # host event weight >= this -> standalone alert
 #   output_path: "/var/lib/anomdec/fast_events.json"
 
 ##################################################

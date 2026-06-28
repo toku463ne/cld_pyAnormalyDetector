@@ -22,6 +22,7 @@ honouring the resource constraints in CLAUDE.md (no fit, no full-series ops).
 from __future__ import annotations
 from collections import defaultdict
 import logging
+import math
 
 import pandas as pd
 
@@ -142,9 +143,30 @@ def seasonal_veto(
     return kept, suppressed
 
 
+def host_event_weights(
+    events_df: pd.DataFrame, saturation: float
+) -> dict[str, float]:
+    """Per-host corroboration weight from Zabbix events (severity-weighted).
+
+    Each event contributes clip(severity,0,5)/5; per-host weights are summed and
+    saturated with 1 - exp(-sum/saturation), giving a value in [0,1).  A storm of
+    events contributes strongly but never dominates, and low-severity noise stays
+    small — events are a score-based signal, not a binary trigger.
+    """
+    if events_df is None or events_df.empty or "host_name" not in events_df.columns:
+        return {}
+    e = events_df.copy()
+    e["_w"] = (e["severity"].clip(lower=0, upper=5)) / 5.0
+    sat = max(saturation, 1e-9)
+    sums = e.groupby("host_name")["_w"].sum()
+    return {str(h): float(1.0 - math.exp(-(s / sat))) for h, s in sums.items()}
+
+
 def score_events(
     kept_scores: list[AnomalyScore],
     clusters: dict[int, int],
+    item_host: dict[int, str] | None = None,
+    host_event_weight: dict[str, float] | None = None,
 ) -> list[dict]:
     """Group surviving items into events and combine their severities.
 
@@ -155,8 +177,10 @@ def score_events(
         event_score = 1 - prod(1 - s_i),
 
     so more corroborating items raise the score — the desired co-occurrence
-    boost.  Members are carried through (as AnomalyScore) for enrichment by the
-    shell.  Events are returned sorted by score descending.
+    boost.  When host_event_weight is supplied, each member host's Zabbix event
+    weight is folded into the same noisy-OR so co-occurring events boost the
+    score further.  Members are carried through (as AnomalyScore) for enrichment
+    by the shell.  Events are returned sorted by score descending.
     """
     by_group: dict[tuple, list[AnomalyScore]] = defaultdict(list)
     for s in kept_scores:
@@ -169,6 +193,14 @@ def score_events(
         prod = 1.0
         for m in members:
             prod *= 1.0 - max(0.0, min(1.0, m.score))
+        boost = 0.0
+        if host_event_weight and item_host:
+            hosts = {item_host.get(m.item_id, "") for m in members}
+            for h in hosts:
+                w = host_event_weight.get(h, 0.0)
+                if w > 0:
+                    prod *= 1.0 - max(0.0, min(1.0, w))
+                    boost = max(boost, w)
         n = len(members)
         events.append(
             {
@@ -176,7 +208,37 @@ def score_events(
                 "n_items": n,
                 "cluster": gid if kind == "cluster" else -1,
                 "reason": "novel co-occurrence" if n >= 2 else "single-item",
+                "zabbix_boost": round(boost, 4),
                 "members": members,
+            }
+        )
+    events.sort(key=lambda e: e["score"], reverse=True)
+    return events
+
+
+def event_only_events(
+    host_event_weight: dict[str, float],
+    covered_hosts: set[str],
+    min_event_score: float,
+) -> list[dict]:
+    """Standalone events for hosts with Zabbix event activity but no metric
+    anomaly: an event storm can raise the score on its own.  Hosts already
+    represented by a metric event (covered_hosts) are skipped to avoid double
+    counting.
+    """
+    events: list[dict] = []
+    for host, w in host_event_weight.items():
+        if host in covered_hosts or w < min_event_score:
+            continue
+        events.append(
+            {
+                "score": w,
+                "n_items": 0,
+                "cluster": -1,
+                "reason": "zabbix_events",
+                "zabbix_boost": round(w, 4),
+                "host": host,
+                "members": [],
             }
         )
     events.sort(key=lambda e: e["score"], reverse=True)

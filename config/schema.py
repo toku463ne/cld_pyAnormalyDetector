@@ -78,6 +78,7 @@ class ClusteringConfig(BaseModel):
     min_samples: int = 2
     sigma: float = 2.0
     detection_period: int = 43200
+    rescue_same_incident: bool = True  # pull magnitude-suppressed items into a confirmed cluster
 
 
 class MagnitudeConfig(BaseModel):
@@ -156,6 +157,10 @@ class FastDetectConfig(BaseModel):
     seasonal_veto: bool = True      # suppress levels expected for this hour-of-day
     seasonal_lambda: float = 3.0    # |recent - hour_mean|/hour_std < this => expected
     cooccur: bool = True            # group co-triggers via DBSCAN
+    use_zabbix_events: bool = False # fold severity-weighted Zabbix events into the score
+    events_window_secs: int = 0     # event lookback window (0 => reuse history_span_secs)
+    events_saturation: float = 3.0  # sum of severity-weights mapping to ~full host weight
+    min_event_score: float = 0.5    # host event weight >= this -> standalone event alert
     output_path: str = "/tmp/anomdec/fast_events.json"
 
 
