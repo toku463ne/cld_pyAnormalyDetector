@@ -88,8 +88,24 @@ metric_categories:
     hi_secs: 3600            # ≥ this (sustained ≥ 1h) → full weight
     floor: 0.0
   categories:
+    # --- container / packet / session metrics: small or non-byte units, so an
+    #     absolute byte/percent floor is wrong.  Driven by RELATIVE Δ instead, so
+    #     a collapse to zero (delta/baseline ≈ 1.0) always scores full magnitude.
+    #     Listed BEFORE the byte-based `network`/`cpu` rules so they win.
+    - name: container_cpu    # docker cpu_usage rate is a small fraction, not %-points
+      key_patterns: ["docker.container_stats.cpu_usage.*"]
+      weight: 1.0
+      magnitude: {mode: relative, lo: 0.3, hi: 1.0}
+    - name: packets          # packet counts/rates, not bytes
+      key_patterns: ["docker.networks.*packets*", "net.if.*packets*", "vmware.vm.net.*packets*"]
+      weight: 0.6
+      magnitude: {mode: relative, lo: 0.3, hi: 1.0}
+    - name: session_traffic  # connection-tracking traffic; units vary by device
+      key_patterns: ["*session*traffic*"]
+      weight: 0.6
+      magnitude: {mode: relative, lo: 0.3, hi: 1.0}
     - name: network          # bytes/sec — absolute Δ floor (steady high host → Δ≈0 → ignored)
-      key_patterns: ["net.if.*", "vmware.vm.net.*", "docker.networks.*", "*session*traffic*"]
+      key_patterns: ["net.if.*", "vmware.vm.net.*", "docker.networks.*"]
       weight: 0.2
       magnitude: {mode: absolute, lo: 1048576, hi: 10485760}   # 1 MB → 10 MB
     - name: cpu_load         # load average — absolute Δ in load units (unbounded, ~scales with cores)
@@ -97,7 +113,7 @@ metric_categories:
       weight: 1.0
       magnitude: {mode: absolute, lo: 1, hi: 4}
     - name: cpu              # percent — absolute Δ in percentage points
-      key_patterns: ["system.cpu.util*", "vmware.vm.cpu.*", "docker.container_stats.cpu_usage.*"]
+      key_patterns: ["system.cpu.util*", "vmware.vm.cpu.*"]
       weight: 1.0
       magnitude: {mode: absolute, lo: 10, hi: 40}
     - name: memory_pct       # percent — absolute Δ in percentage points
