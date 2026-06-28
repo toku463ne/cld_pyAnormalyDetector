@@ -27,6 +27,8 @@
 #   --super-mode MODE    sudo (default) | psql   how to reach the superuser
 #   --run-tests          run the unit test suite as part of the health test
 #   --write-secret PATH  render secret.example.yml -> PATH (fills DB password)
+#   --config PATH        run the full readiness check (admdb + data sources) using
+#                        this config; needs ANOMDEC_SECRET_PATH for DB creds
 #   -h | --help
 #
 set -euo pipefail
@@ -51,6 +53,7 @@ WITH_TEST_DB=0
 SUPER_MODE="sudo"
 RUN_TESTS=0
 WRITE_SECRET=""
+SETUP_CONFIG=""
 
 # --- args -----------------------------------------------------------------
 while [ $# -gt 0 ]; do
@@ -62,6 +65,7 @@ while [ $# -gt 0 ]; do
     --super-mode)    SUPER_MODE="${2:?--super-mode needs an argument}"; shift ;;
     --run-tests)     RUN_TESTS=1 ;;
     --write-secret)  WRITE_SECRET="${2:?--write-secret needs a path}"; shift ;;
+    --config)        SETUP_CONFIG="${2:?--config needs a path}"; shift ;;
     -h|--help)       awk 'NR==1 && /^#!/ {next} /^#/ {sub(/^#( )?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -165,7 +169,11 @@ health_test() {
          ANOMDEC_DB_NAME="$DB_NAME" ANOMDEC_DB_USER="$DB_USER" \
          ANOMDEC_DB_PASSWORD="$DB_PASSWORD"
 
-  "$PY" "${REPO_ROOT}/scripts/healthcheck.py" || die "admdb health test failed"
+  if [ -n "$SETUP_CONFIG" ]; then
+    "$PY" "${REPO_ROOT}/scripts/healthcheck.py" -c "$SETUP_CONFIG" || die "readiness check failed"
+  else
+    "$PY" "${REPO_ROOT}/scripts/healthcheck.py" || die "admdb health test failed"
+  fi
 
   info "checking CLI entrypoints"
   for cli in anomdec-detect anomdec-detect-fast anomdec-update-stats; do
