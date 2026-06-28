@@ -200,6 +200,14 @@ def _correlation_distance_matrix(charts: dict[int, pd.Series]) -> np.ndarray:
     min_len = min(len(s) for s in charts.values())
     aligned = np.array([charts[i].iloc[:min_len].to_numpy(dtype=float) for i in item_ids])
 
+    # Correlate first differences (co-movement of *changes*), not raw levels.
+    # Raw infra series share a slow non-stationary drift (memory creeping up,
+    # counters trending), which makes unrelated items look correlated and merges
+    # them into one cluster.  Differencing removes that shared drift so only
+    # genuinely co-moving shapes (same incident) cluster.
+    if aligned.shape[1] >= 3:
+        aligned = np.diff(aligned, axis=1)
+
     mat = np.ones((n, n))
     for i in range(n):
         mat[i, i] = 0.0
