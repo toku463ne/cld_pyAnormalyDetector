@@ -132,28 +132,63 @@ metric_categories:
 ##################################################
 #  item / anomaly filters (cascaded to data_sources)
 ##################################################
-#  Filters are matched by items.key_ (fnmatch glob) and items.units (exact).
-#  - item_filters    drop items BEFORE detectors run (saves compute)
-#  - anomaly_filters drop scored anomalies whose absolute change is too small
-#                    to matter operationally
-#
-#  Both lists are empty by default. Uncomment and tune for your environment.
-#
-# item_filters:
-#   - name: ignore-zero-load        # never alert when an idle item bumps a bit
-#     key_pattern: "system.cpu.load*"
-#     min_value: 0.5
-#
-# anomaly_filters:
-#   - name: cpu-percent-noise       # 1% CPU change isn't worth checking
-#     units: "%"
-#     min_abs_diff: 10.0
-#   - name: memory-bytes-noise      # only alert if memory moves >= 1 GiB
-#     units: "B"
-#     min_abs_diff: 1073741824
-#   - name: network-bps-noise       # ignore <1 Mbps shifts
-#     units: "bps"
-#     min_abs_diff: 1000000
+#  Matched by items.key_ (fnmatch glob) AND items.units (exact); empty = match all.
+#  - item_filters    drop items BEFORE detectors run (== old item_conds)
+#  - anomaly_filters drop scored anomalies whose |recent-trend| change is below an
+#                    operationally meaningful amount (== old item_diff_conds)
+#  Ported from org/pyAnomalyDetector/samples/zabbix_psql.yml. NOTE: SQL-LIKE
+#  brackets (net.if.x[y], web.test.time[z]) become a trailing * here because
+#  fnmatch treats [..] as a character class.
+
+item_filters:
+  - name: ignore-uptime
+    key_pattern: "*uptime*"
+  - name: ignore-localtime
+    key_pattern: "system.localtime"
+  - name: ignore-low-traffic         # only flag interface traffic above 8 Mbps
+    key_pattern: "net.if.*"
+    units: "bps"
+    min_value: 8000000
+
+anomaly_filters:
+  - name: cpu-pct-noise              # CPU % change must exceed 8 points
+    key_pattern: "*cpu.*"
+    units: "%"
+    min_abs_diff: 8
+  - name: mem-pct-noise
+    key_pattern: "*mem.*"
+    units: "%"
+    min_abs_diff: 8
+  - name: fs-size-pct-noise
+    key_pattern: "*vfs.fs.size*"
+    units: "%"
+    min_abs_diff: 3
+  - name: fs-size-bytes-noise        # only flag disk moves >= 1 GB
+    key_pattern: "*vfs.fs.size*"
+    units: "B"
+    min_abs_diff: 1000000000
+  - name: fs-inode-pct-noise
+    key_pattern: "*vfs.fs.inode*"
+    units: "%"
+    min_abs_diff: 3
+  - name: pused-pct-noise
+    key_pattern: "*.pused*"
+    units: "%"
+    min_abs_diff: 3
+  - name: webtest-time-noise
+    key_pattern: "web.test.time*"
+    units: "s"
+    min_abs_diff: 1
+  - name: net-traffic-noise          # ignore < 1 Mbps shifts
+    key_pattern: "net.if.*"
+    units: "bps"
+    min_abs_diff: 1000000
+  - name: pct-noise-catchall         # any percent metric: ignore < 3 point change
+    units: "%"
+    min_abs_diff: 3
+  - name: temp-noise                 # ignore < 5 degree changes
+    units: "°C"
+    min_abs_diff: 5
 
 ##################################################
 #  fast_detect: high-frequency short-span axis (cascaded to data_sources)
