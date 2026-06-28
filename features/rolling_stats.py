@@ -114,10 +114,14 @@ def _incremental_update(
 
     merged = merged[merged["cnt"] > 0].copy()
     merged["mean"] = merged["sum"] / merged["cnt"]
-    merged["std"] = np.sqrt(
+    # Clip variance at 0 BEFORE sqrt: floating-point cancellation in
+    # (sqr_sum - sum^2/cnt) can produce a tiny negative, and sqrt(neg) -> NaN
+    # plus a RuntimeWarning.
+    variance = (
         (merged["sqr_sum"] - merged["sum"] ** 2 / merged["cnt"])
         / (merged["cnt"] - 1).clip(lower=1)
-    ).clip(lower=0).fillna(0)
+    ).clip(lower=0)
+    merged["std"] = np.sqrt(variance).fillna(0)
     merged = merged[["sum", "sqr_sum", "cnt", "mean", "std"]].reset_index()
 
     store.upsert(merged)
@@ -139,8 +143,9 @@ def _upsert_from_raw(
     )
     agg = agg[agg["cnt"] > 0].copy()
     agg["mean"] = agg["sum"] / agg["cnt"]
-    agg["std"] = np.sqrt(
+    variance = (
         (agg["sqr_sum"] - agg["sum"] ** 2 / agg["cnt"])
         / (agg["cnt"] - 1).clip(lower=1)
-    ).clip(lower=0).fillna(0)
+    ).clip(lower=0)
+    agg["std"] = np.sqrt(variance).fillna(0)
     store.upsert(agg)
