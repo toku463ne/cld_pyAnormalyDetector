@@ -377,12 +377,13 @@ class DetectionPipeline:
         if history_df.empty:
             return {i: -1 for i in item_ids}
 
-        # Fetch pre-anomaly trends for Stage 2 shape correlation.
-        # Window: from trends_retention days ago up to the clustering startep,
-        # so correlation captures the item's typical shape before the anomaly.
-        trends_lookback = endep - ds_cfg.trends_retention * 86400
-        trends_df = src.get_trends(trends_lookback, startep - 1, item_ids)
-
+        # Correlate on the history/anomaly window only, at its real resolution.
+        # We used to prepend trends_retention days of hourly trends here to give
+        # the correlation "pre-anomaly shape", but at 14d x hourly it buried the
+        # signal: most anomalous items are flat at baseline for those days, so the
+        # correlation collapsed onto the single spike in the final window — and
+        # every item was flagged anomalous in that same window, making unrelated
+        # shapes (a linear ramp vs. spiky writes) look ~0.9 correlated and merge.
         return cluster_anomalies(
-            history_df, trends_stats, item_ids, ds_cfg.clustering, trends_df=trends_df
+            history_df, trends_stats, item_ids, ds_cfg.clustering
         )

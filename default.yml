@@ -56,7 +56,7 @@ ensemble:
 ##################################################
 clustering:
   jaccard_eps: 0.1
-  corr_eps: 0.2
+  corr_eps: 0.10   # correlate first-diffs on the history window only; 0.2 merged everything that co-spiked
   min_samples: 2
   sigma: 2.0
   detection_period: 43200    # seconds of history used for clustering

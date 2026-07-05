@@ -194,7 +194,7 @@ def run_offline_eval(
     clusters: dict[int, int] = {}
     if len(anomaly_ids) >= 2:
         clusters = cluster_anomalies(
-            history_df, trends_stats, anomaly_ids, ds_config.clustering, trends_df=trends_df
+            history_df, trends_stats, anomaly_ids, ds_config.clustering
         )
     cluster_report = compute_clustering_metrics(clusters, dataset)
 

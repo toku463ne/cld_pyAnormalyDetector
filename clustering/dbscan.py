@@ -7,6 +7,14 @@ its first differences are correlated against the others (so a shared slow drift
 doesn't make unrelated items look alike), and DBSCAN groups items whose
 correlation distance is within corr_eps.
 
+Correlation is computed on the history/anomaly window only, at its real
+resolution.  An earlier version prepended trends_retention days of hourly trends
+to capture "pre-anomaly shape", but that buried the signal: most anomalous items
+are flat at baseline for those days, so the correlation collapsed onto the single
+spike in the final window — and since every item was flagged anomalous in that
+same window, unrelated shapes (a linear ramp vs. spiky writes) looked ~0.9
+correlated and merged into one cluster.
+
 History note: this used to be a 2-stage Jaccard-then-correlation pipeline, but the
 Stage-1 Jaccard (overlap of threshold-crossing timestamps) was fragile — sparse
 spikes vanish under resampling, so it blocked genuinely co-moving items (e.g. two
@@ -32,7 +40,6 @@ def cluster_anomalies(
     trends_stats: pd.DataFrame,
     item_ids: list[int],
     cfg: ClusteringConfig,
-    trends_df: pd.DataFrame | None = None,
 ) -> dict[int, int]:
     """
     Parameters
@@ -41,9 +48,6 @@ def cluster_anomalies(
     trends_stats : itemid, mean, std  (unused; kept for signature compatibility)
     item_ids     : items to cluster
     cfg          : ClusteringConfig (corr_eps, min_samples)
-    trends_df    : itemid, clock, value_avg  (longer pre-anomaly window).  When
-                   provided it is prepended to history so the correlation captures
-                   the shape *before and through* the anomaly, not just the spike.
 
     Returns
     -------
@@ -52,9 +56,9 @@ def cluster_anomalies(
     if len(item_ids) < 2:
         return {i: -1 for i in item_ids}
 
-    # Build time-normalized charts (trends+history); correlation is on first
-    # differences (see _correlation_distance_matrix).
-    charts = _build_corr_charts(history_df, trends_df, item_ids)
+    # Build time-normalized charts from the history window; correlation is on
+    # first differences (see _correlation_distance_matrix).
+    charts = _build_charts(history_df, item_ids)
     # `present` MUST follow chart key order — the distance matrix (and thus
     # db.labels_) is built from list(charts.keys()); a different order here
     # misattributes labels to the wrong items.
@@ -87,28 +91,6 @@ def cluster_anomalies(
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-
-def _build_corr_charts(
-    history_df: pd.DataFrame,
-    trends_df: pd.DataFrame | None,
-    item_ids: list[int],
-) -> dict[int, pd.Series]:
-    """
-    Build series for Stage 2 correlation.
-    When trends_df is available, prepend it to history so the series
-    captures the item's shape *before* the anomaly window, not just the spike.
-    """
-    if trends_df is None or trends_df.empty:
-        return _build_charts(history_df, item_ids)
-
-    # Rename value_avg → value so concat works uniformly
-    t = trends_df[["itemid", "clock", "value_avg"]].rename(columns={"value_avg": "value"})
-    combined = pd.concat(
-        [t, history_df[["itemid", "clock", "value"]]],
-        ignore_index=True,
-    ).sort_values(["itemid", "clock"])
-    return _build_charts(combined, item_ids)
-
 
 def _infer_unitsecs(df: pd.DataFrame, fallback: int = 600) -> int:
     """Coarsest typical sampling interval across items (max of per-item median

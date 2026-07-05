@@ -74,7 +74,12 @@ class AnomalyFilterRule(BaseModel):
 
 class ClusteringConfig(BaseModel):
     jaccard_eps: float = 0.1
-    corr_eps: float = 0.2
+    # Correlation-distance eps for DBSCAN. Tuned for correlating first-differences
+    # on the history/anomaly window only (see clustering/dbscan.py). The old 0.2
+    # was set when 14d of hourly trends were prepended; on the short window that
+    # distribution shifts and 0.2 merges everything that co-spikes into mega-
+    # clusters, so 0.10 is the knee that keeps clusters coherent by host/metric.
+    corr_eps: float = 0.10
     min_samples: int = 2
     sigma: float = 2.0
     detection_period: int = 43200
