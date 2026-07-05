@@ -384,6 +384,14 @@ class DetectionPipeline:
         # correlation collapsed onto the single spike in the final window — and
         # every item was flagged anomalous in that same window, making unrelated
         # shapes (a linear ramp vs. spiky writes) look ~0.9 correlated and merge.
+        #
+        # item_keys feeds the raw-correlation channel (see cluster_anomalies) so
+        # same-family monotonic ramps (e.g. docker throttling counters on sibling
+        # hosts) cluster even though differencing can't tell them apart.
+        item_keys = {
+            d.item_id: (d.key_ or d.item_name)
+            for d in src.get_item_details(item_ids)
+        }
         return cluster_anomalies(
-            history_df, trends_stats, item_ids, ds_cfg.clustering
+            history_df, trends_stats, item_ids, ds_cfg.clustering, item_keys=item_keys
         )

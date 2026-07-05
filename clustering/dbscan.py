@@ -42,6 +42,7 @@ def cluster_anomalies(
     trends_stats: pd.DataFrame,
     item_ids: list[int],
     cfg: ClusteringConfig,
+    item_keys: dict[int, str] | None = None,
 ) -> dict[int, int]:
     """
     Parameters
@@ -49,7 +50,12 @@ def cluster_anomalies(
     history_df   : itemid, clock, value  (recent history for the clustering period)
     trends_stats : itemid, mean, std  (unused; kept for signature compatibility)
     item_ids     : items to cluster
-    cfg          : ClusteringConfig (corr_eps, min_samples)
+    cfg          : ClusteringConfig (corr_eps, min_samples, raw_corr_min)
+    item_keys    : item_id → metric key/name.  Enables the raw-correlation
+                   channel: monotonic ramps (cumulative counters) that the
+                   first-difference channel can't group are merged when they are
+                   near-identical in raw levels *and* share a metric family.
+                   None disables that channel (pure first-difference clustering).
 
     Returns
     -------
@@ -68,7 +74,10 @@ def cluster_anomalies(
     if len(present) < 2:
         return {i: -1 for i in item_ids}
 
-    corr_mat = _correlation_distance_matrix(charts)
+    families = None
+    if item_keys:
+        families = [_key_family(item_keys.get(i, "")) for i in present]
+    corr_mat = _correlation_distance_matrix(charts, families, cfg.raw_corr_min)
     corr_mat = _normalise(corr_mat)
     np.fill_diagonal(corr_mat, 0.0)
 
@@ -142,49 +151,78 @@ def _build_charts(
     return charts
 
 
-def _correlation_distance_matrix(charts: dict[int, pd.Series]) -> np.ndarray:
+def _key_family(key: str) -> str:
+    """Metric family = the key up to its first parameter bracket, so the same
+    metric on different hosts/instances shares a family.  E.g.
+    ``docker...throttling_periods[c1]`` and ``[c2]`` → ``docker...throttling_periods``.
+    Empty for an empty key (disables the raw channel for that item)."""
+    return key.split("[", 1)[0].strip()
+
+
+def _rank_rows(mat: np.ndarray) -> np.ndarray:
+    """Row-wise ranks; a zero-variance row becomes all-zero (→ 0 correlation)."""
+    return np.vstack([
+        rankdata(row) if np.std(row) > 0 else np.zeros(mat.shape[1])
+        for row in mat
+    ])
+
+
+def _spearman(ranked_i: np.ndarray, ranked_j: np.ndarray) -> float:
+    """Pearson on ranks; 0 for a flat (zero-variance) row or NaN result."""
+    if np.std(ranked_i) == 0 or np.std(ranked_j) == 0:
+        return 0.0
+    corr = np.corrcoef(ranked_i, ranked_j)[0, 1]
+    return 0.0 if np.isnan(corr) else float(corr)
+
+
+def _correlation_distance_matrix(
+    charts: dict[int, pd.Series],
+    families: list[str] | None = None,
+    raw_corr_min: float = 0.99,
+) -> np.ndarray:
     item_ids = list(charts.keys())
     n = len(item_ids)
     # Align all series to the same length
     min_len = min(len(s) for s in charts.values())
-    aligned = np.array([charts[i].iloc[:min_len].to_numpy(dtype=float) for i in item_ids])
+    raw = np.array([charts[i].iloc[:min_len].to_numpy(dtype=float) for i in item_ids])
 
-    # Correlate first differences (co-movement of *changes*), not raw levels.
-    # Raw infra series share a slow non-stationary drift (memory creeping up,
-    # counters trending), which makes unrelated items look correlated and merges
-    # them into one cluster.  Differencing removes that shared drift so only
-    # genuinely co-moving shapes (same incident) cluster.
-    if aligned.shape[1] >= 3:
-        aligned = np.diff(aligned, axis=1)
+    # Channel 1 (primary): correlate first *differences* (co-movement of changes),
+    # not raw levels.  Raw infra series share a slow non-stationary drift (memory
+    # creeping up, counters trending), which makes unrelated items look correlated
+    # and merges them into one cluster.  Differencing removes that shared drift.
+    # Use Spearman (rank) correlation: the window is short (a handful of coarse-
+    # grid points), so during an incident many unrelated metrics get one or two
+    # large coincident spikes.  Pearson is dominated by those few extremes and
+    # reports ~0.9 between shapes that only touch at the spikes (a pgsql plateau
+    # vs. a memory sawtooth); ranking flattens the spikes so an item must co-move
+    # across the *bulk* of the window to score high.
+    diffed = np.diff(raw, axis=1) if raw.shape[1] >= 3 else raw
+    ranked_diff = _rank_rows(diffed)
 
-    # Use *Spearman* (rank) correlation, i.e. Pearson on the ranks of the
-    # differences.  The clustering window is short (a handful of coarse-grid
-    # points), so during an incident many unrelated metrics get one or two large
-    # coincident spikes.  Pearson is dominated by those few extreme values and
-    # reports ~0.9 correlation between shapes that only touch at the spikes (e.g.
-    # a pgsql commit-rate plateau vs. a memory sawtooth).  Ranking flattens the
-    # spikes to ordinary rank steps, so an item must co-move across the *bulk* of
-    # the window to score high — genuine pairs (memory used/util) stay at ~1.0
-    # while spike-only riders fall below corr_eps and drop out.
-    ranked = np.vstack([
-        rankdata(row) if np.std(row) > 0 else np.zeros(aligned.shape[1])
-        for row in aligned
-    ])
+    # Channel 2 (raw, gated): the difference channel cannot group monotonic ramps
+    # (cumulative counters like docker throttling_periods) — differencing turns a
+    # ramp into a roughly constant increment series whose rank order is noise, so
+    # genuine ramp groups fragment into singletons.  Raw levels correlate ~1.0 for
+    # such ramps, but so do *unrelated* ramps (a sip counter vs. a docker counter
+    # are both rank 1..N over a short window), so raw alone re-merges everything
+    # that trends up.  Gate it: only let raw correlation create an edge when the
+    # two items share a metric family AND correlate above raw_corr_min.
+    ranked_raw = _rank_rows(raw) if families is not None else None
 
     mat = np.ones((n, n))
-    # A flat (zero-variance / all-zero-rank) series makes corrcoef emit
-    # invalid/divide warnings and return NaN; we map that to 0 correlation.
     with np.errstate(invalid="ignore", divide="ignore"):
         for i in range(n):
             mat[i, i] = 0.0
             for j in range(i + 1, n):
-                if np.std(ranked[i]) == 0 or np.std(ranked[j]) == 0:
-                    corr = 0.0
-                else:
-                    corr = np.corrcoef(ranked[i], ranked[j])[0, 1]
-                    if np.isnan(corr):
-                        corr = 0.0
-                dist = (1.0 - corr) / 2.0  # map [-1,1] → [1,0]
+                dist = (1.0 - _spearman(ranked_diff[i], ranked_diff[j])) / 2.0
+                if (
+                    ranked_raw is not None
+                    and families[i]
+                    and families[i] == families[j]
+                ):
+                    raw_corr = _spearman(ranked_raw[i], ranked_raw[j])
+                    if raw_corr >= raw_corr_min:
+                        dist = min(dist, (1.0 - raw_corr) / 2.0)
                 mat[i, j] = mat[j, i] = dist
     return mat
 

@@ -80,6 +80,12 @@ class ClusteringConfig(BaseModel):
     # distribution shifts and 0.2 merges everything that co-spikes into mega-
     # clusters, so 0.10 is the knee that keeps clusters coherent by host/metric.
     corr_eps: float = 0.10
+    # Raw-correlation channel: two items sharing a metric family that correlate
+    # in raw levels above this threshold are merged even if their first-difference
+    # correlation is weak. This recovers monotonic-ramp groups (cumulative
+    # counters like docker throttling_periods) that differencing alone fragments.
+    # Kept strict so only near-identical same-family ramps merge.
+    raw_corr_min: float = 0.99
     min_samples: int = 2
     sigma: float = 2.0
     detection_period: int = 43200
