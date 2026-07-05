@@ -3,8 +3,9 @@ Correlation-based DBSCAN clustering for anomalous items.
 
 Items whose time-series *shapes co-move* belong to the same incident.  Each item
 is resampled onto a common clock grid (so different collection periods align),
-its first differences are correlated against the others (so a shared slow drift
-doesn't make unrelated items look alike), and DBSCAN groups items whose
+its first differences are rank-correlated (Spearman) against the others (so a
+shared slow drift doesn't make unrelated items look alike, and a few large
+coincident spikes can't dominate the score), and DBSCAN groups items whose
 correlation distance is within corr_eps.
 
 Correlation is computed on the history/anomaly window only, at its real
@@ -28,6 +29,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from scipy.stats import rankdata
 from sklearn.cluster import DBSCAN
 
 from config.schema import ClusteringConfig
@@ -155,16 +157,33 @@ def _correlation_distance_matrix(charts: dict[int, pd.Series]) -> np.ndarray:
     if aligned.shape[1] >= 3:
         aligned = np.diff(aligned, axis=1)
 
+    # Use *Spearman* (rank) correlation, i.e. Pearson on the ranks of the
+    # differences.  The clustering window is short (a handful of coarse-grid
+    # points), so during an incident many unrelated metrics get one or two large
+    # coincident spikes.  Pearson is dominated by those few extreme values and
+    # reports ~0.9 correlation between shapes that only touch at the spikes (e.g.
+    # a pgsql commit-rate plateau vs. a memory sawtooth).  Ranking flattens the
+    # spikes to ordinary rank steps, so an item must co-move across the *bulk* of
+    # the window to score high — genuine pairs (memory used/util) stay at ~1.0
+    # while spike-only riders fall below corr_eps and drop out.
+    ranked = np.vstack([
+        rankdata(row) if np.std(row) > 0 else np.zeros(aligned.shape[1])
+        for row in aligned
+    ])
+
     mat = np.ones((n, n))
-    # A flat (zero-variance) series makes corrcoef emit invalid/divide warnings
-    # and return NaN; we map that to 0 correlation, so silence the warnings.
+    # A flat (zero-variance / all-zero-rank) series makes corrcoef emit
+    # invalid/divide warnings and return NaN; we map that to 0 correlation.
     with np.errstate(invalid="ignore", divide="ignore"):
         for i in range(n):
             mat[i, i] = 0.0
             for j in range(i + 1, n):
-                corr = np.corrcoef(aligned[i], aligned[j])[0, 1]
-                if np.isnan(corr):
+                if np.std(ranked[i]) == 0 or np.std(ranked[j]) == 0:
                     corr = 0.0
+                else:
+                    corr = np.corrcoef(ranked[i], ranked[j])[0, 1]
+                    if np.isnan(corr):
+                        corr = 0.0
                 dist = (1.0 - corr) / 2.0  # map [-1,1] → [1,0]
                 mat[i, j] = mat[j, i] = dist
     return mat
