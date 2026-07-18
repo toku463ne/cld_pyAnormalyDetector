@@ -43,6 +43,7 @@ def cluster_anomalies(
     item_ids: list[int],
     cfg: ClusteringConfig,
     item_keys: dict[int, str] | None = None,
+    onsets: dict[int, int] | None = None,
 ) -> dict[int, int]:
     """
     Parameters
@@ -50,12 +51,18 @@ def cluster_anomalies(
     history_df   : itemid, clock, value  (recent history for the clustering period)
     trends_stats : itemid, mean, std  (unused; kept for signature compatibility)
     item_ids     : items to cluster
-    cfg          : ClusteringConfig (corr_eps, min_samples, raw_corr_min)
+    cfg          : ClusteringConfig (corr_eps, min_samples, raw_corr_min,
+                   max_onset_gap)
     item_keys    : item_id → metric key/name.  Enables the raw-correlation
                    channel: monotonic ramps (cumulative counters) that the
                    first-difference channel can't group are merged when they are
                    near-identical in raw levels *and* share a metric family.
                    None disables that channel (pure first-difference clustering).
+    onsets       : item_id → epoch at which the item's anomaly began (see
+                   features/onset.py).  Applies the onset constraint: items whose
+                   onsets differ by more than cfg.max_onset_gap cannot share a
+                   cluster.  Items missing from the dict are unconstrained.
+                   None disables the constraint entirely.
 
     Returns
     -------
@@ -80,6 +87,16 @@ def cluster_anomalies(
     corr_mat = _correlation_distance_matrix(charts, families, cfg.raw_corr_min)
     corr_mat = _normalise(corr_mat)
     np.fill_diagonal(corr_mat, 0.0)
+
+    # Applied AFTER normalisation so rescaling can never compress a forbidden
+    # pair back under eps.  It can only ever split, never merge.
+    if onsets is not None and cfg.max_onset_gap > 0:
+        n_cut = _apply_onset_constraint(corr_mat, present, onsets, cfg.max_onset_gap)
+        if n_cut:
+            logger.info(
+                "clustering: onset constraint severed %d pair(s) (max_onset_gap=%ds)",
+                n_cut, cfg.max_onset_gap,
+            )
 
     db = DBSCAN(
         eps=cfg.corr_eps, min_samples=cfg.min_samples, metric="precomputed"
@@ -225,6 +242,38 @@ def _correlation_distance_matrix(
                         dist = min(dist, (1.0 - raw_corr) / 2.0)
                 mat[i, j] = mat[j, i] = dist
     return mat
+
+
+def _apply_onset_constraint(
+    mat: np.ndarray,
+    present: list[int],
+    onsets: dict[int, int],
+    max_gap: int,
+) -> int:
+    """Forbid edges between items whose anomalies began too far apart.
+
+    Sets the distance to 1.0 (far beyond any sane corr_eps) for pairs whose
+    onsets differ by more than max_gap.  Mutates `mat` in place and returns the
+    number of pairs severed.
+
+    Fails open: a pair is only severed when **both** onsets are known.  An
+    unresolved onset (flat baseline, no trends, already back to normal) must not
+    silently isolate an item — absence of evidence is not evidence of a
+    different incident.
+    """
+    n_cut = 0
+    for i in range(len(present)):
+        o_i = onsets.get(present[i])
+        if o_i is None:
+            continue
+        for j in range(i + 1, len(present)):
+            o_j = onsets.get(present[j])
+            if o_j is None:
+                continue
+            if abs(o_i - o_j) > max_gap:
+                mat[i, j] = mat[j, i] = 1.0
+                n_cut += 1
+    return n_cut
 
 
 def _normalise(mat: np.ndarray) -> np.ndarray:

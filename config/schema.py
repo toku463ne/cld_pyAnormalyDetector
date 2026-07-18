@@ -87,9 +87,29 @@ class ClusteringConfig(BaseModel):
     # Kept strict so only near-identical same-family ramps merge.
     raw_corr_min: float = 0.99
     min_samples: int = 2
+    # Threshold for "this sample is outside baseline", used by onset detection:
+    # a trends sample is anomalous outside trend_mean ± sigma·trend_std.
     sigma: float = 2.0
     detection_period: int = 43200
     rescue_same_incident: bool = True  # pull magnitude-suppressed items into a confirmed cluster
+    # Onset constraint: two items may only share a cluster when their anomalies
+    # began within this many seconds of each other.  Correlation alone is blind
+    # to *when* each item started misbehaving — inside a 12h window a ramp that
+    # began a week ago and a step from yesterday are both just gentle drift, so
+    # unrelated items merge.  Onsets come from trends (hourly), so the practical
+    # resolution is one hour.  0 disables the constraint.
+    max_onset_gap: int = 7200
+    # Onset = when the item's current level regime began (see features/onset.py).
+    # level_tol is the relative band that counts as "still the same level": 0.1
+    # means +/-10% of the current value.  For step changes the onset is
+    # essentially independent of this; for gradual ramps it sets how far back
+    # "the same level" reaches.
+    onset_level_tol: float = 0.1
+    # Consecutive out-of-band trends samples tolerated before the regime is
+    # treated as ended (absorbs brief dips).
+    onset_tolerance: int = 2
+    # Trailing trends samples whose median defines the current level.
+    onset_recent_samples: int = 3
 
 
 class MagnitudeConfig(BaseModel):

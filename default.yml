@@ -59,8 +59,17 @@ clustering:
   corr_eps: 0.10   # correlate first-diffs on the history window only; 0.2 merged everything that co-spiked
   raw_corr_min: 0.99   # raw-level channel: recover same-family monotonic ramps the diff channel fragments
   min_samples: 2
-  sigma: 2.0
+  sigma: 2.0                 # trends sample is "outside baseline" beyond mean ± sigma*std
   detection_period: 43200    # seconds of history used for clustering
+  # Onset constraint: same incident => anomalies started at the same time.
+  # Correlation alone cannot see onset timing — within a 12h window a ramp that
+  # began a week ago and a step from yesterday are both just gentle drift, so
+  # unrelated items merge (e.g. free-disk-space on different hosts).  Onsets are
+  # derived from trends (hourly), so resolution is ~1h.  0 disables.
+  max_onset_gap: 7200        # 2h: items whose anomalies began further apart never share a cluster
+  onset_level_tol: 0.1       # +/-10% of the current value still counts as "the same level"
+  onset_tolerance: 2         # consecutive out-of-band trends samples tolerated inside a regime
+  onset_recent_samples: 3    # trailing trends samples whose median defines the current level
 
 ##################################################
 #  metric categories (cascaded to data_sources)

@@ -23,6 +23,7 @@ from store.history import HistoryStore
 from store.stats import TrendsStatsStore, HistoryStatsStore, HourStatsStore, UpdatesStore
 from store.anomalies import AnomaliesStore
 from features.rolling_stats import update_rolling_stats
+from features.onset import compute_onsets
 from detectors.zscore import ZScoreDetector
 from detectors.changepoint import ChangepointDetector
 from detectors.seasonal import SeasonalDetector
@@ -392,6 +393,52 @@ class DetectionPipeline:
             d.item_id: (d.key_ or d.item_name)
             for d in src.get_item_details(item_ids)
         }
+        onsets = self._compute_onsets(src, ds_cfg, trends_stats, item_ids, endep)
         return cluster_anomalies(
-            history_df, trends_stats, item_ids, ds_cfg.clustering, item_keys=item_keys
+            history_df, trends_stats, item_ids, ds_cfg.clustering,
+            item_keys=item_keys, onsets=onsets,
+        )
+
+    def _compute_onsets(
+        self,
+        src: DataSource,
+        ds_cfg: DataSourceConfig,
+        trends_stats: pd.DataFrame,
+        item_ids: list[int],
+        endep: int,
+    ) -> dict[int, int] | None:
+        """When each item's current excursion began, from the trends window.
+
+        Correlation is blind to onset timing, so without this two items whose
+        anomalies started days apart merge whenever their recent shapes happen to
+        agree.  The onsets are days old by the time an item is flagged, which is
+        why this reads trends rather than the (much shorter) history window.
+
+        Cost is bounded: trends are fetched only for the items being clustered
+        (confirmed anomalies plus rescue candidates), in batch_size chunks — not
+        for the whole corpus.  Returns None when the constraint is disabled, so
+        cluster_anomalies skips it entirely.
+        """
+        if ds_cfg.clustering.max_onset_gap <= 0:
+            return None
+
+        startep = endep - ds_cfg.trends_retention * 86400
+        batch_size = ds_cfg.batch_size
+        frames: list[pd.DataFrame] = []
+        for i in range(0, len(item_ids), batch_size):
+            df = src.get_trends(startep, endep, item_ids[i : i + batch_size])
+            if not df.empty:
+                frames.append(df)
+        if not frames:
+            logger.debug("onset: no trends for %d item(s); constraint inactive", len(item_ids))
+            return {}
+
+        trends_df = pd.concat(frames, ignore_index=True)
+        return compute_onsets(
+            trends_df,
+            trends_stats,
+            level_tol=ds_cfg.clustering.onset_level_tol,
+            sigma=ds_cfg.clustering.sigma,
+            tolerance=ds_cfg.clustering.onset_tolerance,
+            recent_samples=ds_cfg.clustering.onset_recent_samples,
         )
