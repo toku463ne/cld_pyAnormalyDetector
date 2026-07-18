@@ -149,7 +149,7 @@ is therefore matched more loosely than before.
 
 The `metric_categories` layer has no ancestor — it exists because the label data
 shows precision varies by an order of magnitude across metric types
-(DETECTION.md §7.3).
+(DETECTION.md §8.3).
 
 ---
 
@@ -339,7 +339,7 @@ suppression mechanisms that the old cascade used to reach its (low-recall,
 moderate-precision) operating point.
 
 That trade is consistent with the measured outcome: current precision@30 is
-**0.508** on 12 reviewed days (DETECTION.md §7.2–7.3), i.e. the new pipeline
+**0.508** on 12 reviewed days (DETECTION.md §8.2–8.3), i.e. the new pipeline
 flags more and filters less. The `metric_categories` layer is where the lost
 suppression is meant to be rebuilt, and its thresholds are still marked as
 placeholders in `default.yml`.

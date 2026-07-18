@@ -297,9 +297,44 @@ Four periodic jobs, ordered by cadence and dependency:
 | `anomdec-label-queue generate` | daily (`07:30`) | build the day's labeling queue | after stats + several detect runs; needs stored stats |
 
 Each job has a wrapper in `scripts/cron/` that handles the environment, working
-directory, `flock` (no overlapping runs), logging, and the dated output path — so
-the crontab lines stay trivial. **Edit `scripts/cron/anomdec-env.sh` once** for
-your paths/secret; the wrappers source it.
+directory, logging, and the dated output path — so the crontab lines stay
+trivial. **Edit `scripts/cron/anomdec-env.sh` once** for your paths/secret; the
+wrappers source it.
+
+#### Overlapping runs
+
+`anomdec-detect`, `anomdec-detect-fast` and `anomdec-update-stats` each take an
+exclusive lock (`lock_dir`, default `/tmp/anomdec/locks`) for the whole run, so a
+scheduled run and an on-demand manual run of the same command can never overlap.
+This matters because concurrent runs race on the shared admdb accumulators and on
+the `{ds}_updates` watermark, which can double-count a slice or lose one.
+
+The lock lives in the tool rather than in the cron wrapper on purpose: a
+shell-level `flock` around the wrapper only guards cron against cron, and a
+manual invocation would walk straight past it.
+
+A blocked run does no work and exits **75** (`EX_TEMPFAIL`), naming the holding
+pid and how long it has been running:
+
+```console
+$ uv run anomdec-detect -c config.yml
+another 'detect' run is already in progress (pid 31245, running for 412s); lock file: /tmp/anomdec/locks/detect.lock
+$ echo $?
+75
+```
+
+To queue behind the running one instead of giving up, pass `--wait SECS`:
+
+```bash
+uv run anomdec-detect -c config.yml --wait 900   # wait up to 15 min for cron to finish
+```
+
+The cron wrappers translate 75 into a logged "skipped" line and exit 0, so an
+overlap does not generate cron mail; real failures still propagate. The three
+commands hold *separate* locks, so the fast axis is never blocked by the hourly
+sweep. Note that `flock` coordinates within one host only — if you ever run these
+from more than one machine against a single admdb, this needs to become a
+PostgreSQL advisory lock.
 
 ```cron
 # ── pyAnomalyDetector ───────────────────────────────────────────────

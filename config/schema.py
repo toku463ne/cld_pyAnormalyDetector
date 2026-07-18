@@ -299,6 +299,11 @@ class AppConfig(BaseModel):
     view_sources: dict[str, ViewSourceConfig] = {}
     logging: LoggingConfig = LoggingConfig()
 
+    # Directory for the single-instance run locks (see pipeline/lock.py).  Each
+    # entry point takes its own lock so a cron run and a manual run of the same
+    # command cannot overlap and corrupt the shared admdb accumulators.
+    lock_dir: str = "/tmp/anomdec/locks"
+
     # Top-level defaults that cascade into data_sources
     batch_size: int = 100
     history_interval: int = 600

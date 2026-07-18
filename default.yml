@@ -9,6 +9,16 @@ logging:
   file: "anomdec.log"
 
 ##################################################
+#  run locks
+##################################################
+#  Each entry point (anomdec-detect / -detect-fast / -update-stats) takes an
+#  exclusive flock here, so a cron run and an on-demand manual run of the same
+#  command can never overlap.  A blocked run exits 75 (EX_TEMPFAIL) without
+#  doing any work; pass --wait SECS to queue behind the running one instead.
+#  Single host only -- flock does not coordinate across machines.
+lock_dir: "/tmp/anomdec/locks"
+
+##################################################
 #  admdb
 ##################################################
 admdb:

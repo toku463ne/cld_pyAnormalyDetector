@@ -58,7 +58,7 @@ Tables are named `{ds_name}_{suffix}` (`store/base.py`).
 | `{ds}_history_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | hourly |
 | `{ds}_trends_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | daily |
 | `{ds}_hour_stats` | `itemid, hour_of_day, mean, std, cnt` | daily |
-| `{ds}_updates` | `id=1, startep, endep` | **both** — see §7.1 |
+| `{ds}_updates` | `id=1, startep, endep` | **both** — see §8.1 |
 | `{ds}_anomalies` | `itemid, created, group_name, hostid, clusterid, host_name, item_name, trend_mean, trend_std, score, detector_scores JSONB, rescued` | hourly |
 
 ### 1.3 Incremental rolling statistics
@@ -132,7 +132,7 @@ score = min( (z - λ)/λ × 0.5 + 0.5 , 1.0 )       if z >= λ
 so `z = λ → 0.5`, `z = 2λ → 1.0`, and **everything at or beyond `2λ` is exactly
 1.0**. With the default `λ = 3.0` the score saturates at `z ≥ 6`. This is the
 intended shape (a bounded severity), but it means the score carries no ranking
-information in the tail — see §7.2.
+information in the tail — see §8.2.
 
 ### 2.2 ZScoreDetector
 
@@ -491,12 +491,37 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `clustering.detection_period` | 43200 | seconds of history used for clustering |
 | `clustering.max_onset_gap` | 7200 | max onset difference for two items to share a cluster (0 = off) |
 | `clustering.onset_level_tol` | 0.1 | relative band defining "still the same level" |
+| `lock_dir` | `/tmp/anomdec/locks` | where the single-instance run locks live (§7) |
 
 ---
 
-## 7. Known issues and characteristics
+## 7. Concurrency
 
-### 7.1 `{ds}_updates` is shared by both pipelines
+Each entry point holds an exclusive `flock` for its whole run
+(`pipeline/lock.py`), keyed by command name under `lock_dir`
+(default `/tmp/anomdec/locks`):
+
+| Command | Lock file |
+|---|---|
+| `anomdec-detect` | `<lock_dir>/detect.lock` |
+| `anomdec-detect-fast` | `<lock_dir>/detect-fast.lock` |
+| `anomdec-update-stats` | `<lock_dir>/update-stats.lock` |
+
+Separate locks, so the fast axis is never blocked by the hourly sweep. A blocked
+run does nothing and exits `75` (`EX_TEMPFAIL`); `--wait SECS` queues behind the
+holder instead. `--init` runs inside the lock too — recreating tables under a
+live run would be worse than racing on accumulators.
+
+`flock` over a PID file because the kernel releases it however the process dies;
+a stale PID file from `kill -9` would block every later run. Scope is one host —
+see §8.1 for why concurrent runs matter, and note that cross-host coordination
+would need a PostgreSQL advisory lock instead.
+
+---
+
+## 8. Known issues and characteristics
+
+### 8.1 `{ds}_updates` is shared by both pipelines
 
 `UpdatesStore` resolves to the single table `{ds}_updates` with one row
 (`id = 1`), and **both** `DetectionPipeline` (`pipeline/detection.py:67`) and
@@ -514,7 +539,7 @@ empty new slice, and its subtract-old-data range is inverted (empty) — so
 `{ds}_trends_updates`); the implementation has one. Splitting them restores the
 intended behaviour.
 
-### 7.2 Score saturation
+### 8.2 Score saturation
 
 Because the ramp reaches 1.0 at `z = 2λ` (§2.1), most flagged items land on
 exactly 1.0. Measured over 12 human-reviewed days of production label queues
@@ -523,7 +548,7 @@ score cannot rank within the flagged set, and per-queue threshold tuning has
 nothing to bite on. Raising `lambda_threshold` moves the saturation point; an
 unbounded or log-scaled tail would restore ranking.
 
-### 7.3 Precision is metric-type dependent
+### 8.3 Precision is metric-type dependent
 
 Over the same 12 reviewed days, precision@30 was **0.508** overall but varied
 sharply by key prefix: `docker` 0.91, `unbound` 0.83, `system` 0.71 versus
@@ -532,7 +557,7 @@ false positives. This is what `metric_categories[].weight` and the magnitude
 gates exist to correct; the current category thresholds in `default.yml` are
 explicitly marked as placeholders awaiting backtester tuning.
 
-### 7.4 Seasonal baseline is UTC and day-agnostic
+### 8.4 Seasonal baseline is UTC and day-agnostic
 
 `hour_of_day` comes straight from the epoch (§1.4), so the seasonal baseline is
 aligned to UTC rather than site-local time, and weekday/weekend patterns are not
