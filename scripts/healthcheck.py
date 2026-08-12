@@ -45,9 +45,10 @@ def _check_admdb(db, label: str) -> int:
     from store.history import HistoryStore
     from store.stats import (
         HistoryStatsStore,
+        HistoryUpdatesStore,
         HourStatsStore,
         TrendsStatsStore,
-        UpdatesStore,
+        TrendsUpdatesStore,
     )
 
     try:
@@ -58,7 +59,7 @@ def _check_admdb(db, label: str) -> int:
 
     store_classes = (
         HistoryStore, TrendsStatsStore, HistoryStatsStore,
-        HourStatsStore, UpdatesStore, AnomaliesStore,
+        HourStatsStore, HistoryUpdatesStore, TrendsUpdatesStore, AnomaliesStore,
     )
     stores = []
     try:

@@ -3,7 +3,7 @@ StatsUpdatePipeline — daily batch (heavy computation, run off-peak).
 
 For each data source:
   1. Fetch trends data for the retention window.
-  2. Update trends_stats (rolling mean/std) incrementally.
+  2. Recompute trends_stats (window mean/std) from that window.
   3. Compute hour_stats (hour-of-day mean/std) from scratch.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import time
 from config.schema import AppConfig, DataSourceConfig
 from db.postgresql import PostgreSqlDB
 from ingestion.factory import get_data_source
-from store.stats import TrendsStatsStore, HourStatsStore, UpdatesStore
+from store.stats import TrendsStatsStore, HourStatsStore, TrendsUpdatesStore
 from features.rolling_stats import update_rolling_stats
 from features.hour_stats import compute_hour_stats
 
@@ -42,23 +42,20 @@ class StatsUpdatePipeline:
 
         trends_store = TrendsStatsStore(ds_name, db)
         hour_store = HourStatsStore(ds_name, db)
-        updates_store = UpdatesStore(ds_name, db)
+        updates_store = TrendsUpdatesStore(ds_name, db)
 
-        old_startep, old_endep = updates_store.get()
         retention_secs = ds_cfg.trends_retention * 86400
         startep = endep - retention_secs
-        diff_startep = old_endep + 1 if old_endep > 0 else startep
 
         item_ids = src.get_item_ids()
         if not item_ids:
             logger.warning("[%s] no items found", ds_name)
             return
-        logger.info("[%s] %d items, fetching trends [%d, %d]", ds_name, len(item_ids), diff_startep, endep)
+        logger.info("[%s] %d items, fetching trends [%d, %d]", ds_name, len(item_ids), startep, endep)
 
         batch_size = ds_cfg.batch_size
         for i in range(0, len(item_ids), batch_size):
             batch = item_ids[i : i + batch_size]
-            # Fetch full window (needed for subtract-old-data logic)
             trends_df = src.get_trends(startep, endep, batch)
             if trends_df.empty:
                 continue
@@ -67,9 +64,7 @@ class StatsUpdatePipeline:
                 store=trends_store,
                 data_df=trends_df.rename(columns={"value_avg": "value"}),
                 startep=startep,
-                diff_startep=diff_startep,
                 endep=endep,
-                old_startep=old_startep,
                 value_col="value",
                 batch_size=batch_size,
             )

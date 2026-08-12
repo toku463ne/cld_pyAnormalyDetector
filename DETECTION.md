@@ -58,17 +58,15 @@ Tables are named `{ds_name}_{suffix}` (`store/base.py`).
 | `{ds}_history_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | hourly |
 | `{ds}_trends_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | daily |
 | `{ds}_hour_stats` | `itemid, hour_of_day, mean, std, cnt` | daily |
-| `{ds}_updates` | `id=1, startep, endep` | **both** — see §8.1 |
+| `{ds}_history_updates` | `id=1, startep, endep` | hourly (watermark only) |
+| `{ds}_trends_updates` | `id=1, startep, endep` | daily (watermark only) |
 | `{ds}_anomalies` | `itemid, created, group_name, hostid, clusterid, host_name, item_name, trend_mean, trend_std, score, detector_scores JSONB, rescued` | hourly |
 
-### 1.3 Incremental rolling statistics
+### 1.3 Sliding-window statistics
 
-`features/rolling_stats.py` maintains sliding-window mean/std without rescanning
-the window. Accumulators `sum`, `sqr_sum`, `cnt` are stored per item; each run:
-
-1. add the new slice `[diff_startep, endep]`,
-2. subtract the slice that fell out of the window `[old_startep, startep)`,
-3. recompute
+`features/rolling_stats.py` recomputes mean/std over the retention window
+`[startep, endep]` on every run, from the window both callers already fetch
+(`get_trends(startep, endep)` / `get_history(startep, endep)`):
 
 ```
 mean = sum / cnt
@@ -76,12 +74,19 @@ var  = max( (sqr_sum - sum²/cnt) / max(cnt-1, 1), 0 )
 std  = sqrt(var)
 ```
 
-The variance is clipped **before** the square root: floating-point cancellation
-in `sqr_sum - sum²/cnt` can go slightly negative and produce `NaN`
-(`features/rolling_stats.py:117-124`).
+`sum`, `sqr_sum` and `cnt` are stored per item but describe the **current
+window**, not an all-time total. The variance is clipped **before** the square
+root: floating-point cancellation in `sqr_sum - sum²/cnt` can go slightly
+negative and produce `NaN`.
 
-Items not yet in the store are computed from the full window instead
-(`_upsert_from_raw`).
+If the window contains no samples at all (source outage), the stored stats are
+left unchanged rather than wiped.
+
+The critical property is that samples ageing out of the back of the window stop
+contributing: that is what lets a step change be absorbed into the baseline
+after `trends_retention` days, so the item stops being flagged. An earlier
+version kept the accumulators across runs and tried to subtract the rows that
+had aged out — see §8.1.
 
 ### 1.4 Seasonal baseline
 
@@ -104,7 +109,7 @@ time. Day-of-week is not modelled.
 
 ```
 item_ids
-  → update history_stats (incremental)
+  → update history_stats (window recompute)
   → read trends_stats, history_stats, hour_stats[current_hour]
   → item_filters                       (drop items entirely)
   → ZScoreDetector    (O(1)/item)
@@ -521,23 +526,51 @@ would need a PostgreSQL advisory lock instead.
 
 ## 8. Known issues and characteristics
 
-### 8.1 `{ds}_updates` is shared by both pipelines
+### 8.1 The baseline never slid (fixed)
 
-`UpdatesStore` resolves to the single table `{ds}_updates` with one row
-(`id = 1`), and **both** `DetectionPipeline` (`pipeline/detection.py:67`) and
-`StatsUpdatePipeline` (`pipeline/stats_update.py:45`) read and write it.
+Symptom: items that stepped to a new level **weeks** earlier stayed on the
+hourly dashboard indefinitely. Anomaly rows are only kept for
+`anomaly_keep_secs` (1 day) and `anomdec-publish-dashboard` renders only the
+latest cycle, so these were not stale rows — they were being genuinely
+re-detected every hour against a baseline that never moved.
 
-They store different windows: the hourly path writes
-`startep = endep - history_retention × history_interval` (≈ 3 h), the daily path
-writes `startep = endep - trends_retention × 86400` (14 d). Each run therefore
-overwrites the other's watermark. Because `diff_startep = old_endep + 1`, the
-daily batch that follows an hourly run sees `diff_startep ≈ now`, fetches an
-empty new slice, and its subtract-old-data range is inverted (empty) — so
-`trends_stats` can stop advancing.
+Two independent causes, both in the stats update path:
 
-`CLAUDE.md` specifies two separate tables (`{ds}_history_updates` and
-`{ds}_trends_updates`); the implementation has one. Splitting them restores the
-intended behaviour.
+1. **`{ds}_updates` was shared by both pipelines.** `UpdatesStore` resolved to
+   one table with one row (`id = 1`), written by `DetectionPipeline` (≈ 3 h
+   window, hourly) *and* `StatsUpdatePipeline` (14 d window, daily). Each
+   overwrote the other's watermark. Since `diff_startep = old_endep + 1`, the
+   daily trends batch running after an hourly detection saw `diff_startep ≈
+   now` and ingested ~1 trends sample per day — `trends_stats` was effectively
+   frozen at whatever it held when the item was first inserted.
+
+2. **The subtract-old-data slice could never be populated.** It selected rows in
+   `[old_startep, startep)` out of `data_df`, but `data_df` came from
+   `get_trends(startep, endep)` / `get_history(startep, endep)` — every row had
+   `clock >= startep`. So nothing was ever subtracted and `sum`/`sqr_sum`/`cnt`
+   only grew: a cumulative all-time statistic, not a window.
+
+Either one alone keeps the pre-step level in `trend_mean` forever, so the
+ZScore detector keeps seeing a large deviation from a baseline that will never
+update.
+
+The offline evaluation path never showed this: `evaluation/backtester.py`
+computes its stats with a plain `groupby().mean()` over the window and bypasses
+`update_rolling_stats` entirely, so backtests measured a correct sliding window
+that production did not have.
+
+**Fix:** `{ds}_updates` is split into `{ds}_history_updates` and
+`{ds}_trends_updates` (as `CLAUDE.md` always specified), and
+`update_rolling_stats` recomputes from the window in `data_df` instead of
+carrying accumulators across runs. The incremental path saved nothing in
+practice — both callers already fetched the whole window in order to do the
+subtraction. Covered by `tests/unit/test_rolling_stats.py`, which previously
+did not exist.
+
+**Migration:** self-healing. The new watermark tables start empty and are only
+informational now; the first `anomdec-update-stats` run after deploying
+recomputes every item's `trends_stats` from the true 14-day window. The orphaned
+`{ds}_updates` table can be dropped by hand.
 
 ### 8.2 Score saturation
 

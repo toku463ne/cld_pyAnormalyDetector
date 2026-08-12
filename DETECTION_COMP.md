@@ -195,8 +195,8 @@ depending on data it had no control over.
 
 ### 4.3 Numerical stability (cleanup, not a behaviour fix)
 
-`features/rolling_stats.py:117-124` clips variance at 0 **before** `sqrt`, and
-clips `cnt-1` at 1.
+`features/rolling_stats.py` clips variance at 0 **before** `sqrt`, and clips
+`cnt-1` at 1.
 
 The old incremental stats (`data_processing/stats.py:132-133`) computed the same
 `sqr_sum - sum²/cnt` without the clip, so float cancellation could produce

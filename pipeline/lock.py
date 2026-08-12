@@ -3,9 +3,9 @@ Single-instance run lock
 ========================
 Keeps a scheduled (cron) run and an on-demand manual run from executing at the
 same time.  Concurrent runs of the same entry point are unsafe: they race on the
-shared admdb accumulators (`{ds}_history_stats`, `{ds}_trends_stats`) and on the
-`{ds}_updates` watermark, so two overlapping runs can double-count a slice or
-lose one entirely.
+shared admdb stats tables (`{ds}_history_stats`, `{ds}_trends_stats`) and on the
+`{ds}_*_updates` watermarks, so two overlapping runs can interleave writes for
+the same item and leave the stats describing neither run's window.
 
 Uses `flock(2)` on a lock file.  Chosen over a PID file because the kernel
 releases the lock when the process dies **however** it dies — a PID file left by

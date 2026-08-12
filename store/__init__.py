@@ -1,5 +1,11 @@
 from store.history import HistoryStore
-from store.stats import TrendsStatsStore, HistoryStatsStore, HourStatsStore, UpdatesStore
+from store.stats import (
+    TrendsStatsStore,
+    HistoryStatsStore,
+    HourStatsStore,
+    HistoryUpdatesStore,
+    TrendsUpdatesStore,
+)
 from store.anomalies import AnomaliesStore
 
 __all__ = [
@@ -7,6 +13,7 @@ __all__ = [
     "TrendsStatsStore",
     "HistoryStatsStore",
     "HourStatsStore",
-    "UpdatesStore",
+    "HistoryUpdatesStore",
+    "TrendsUpdatesStore",
     "AnomaliesStore",
 ]

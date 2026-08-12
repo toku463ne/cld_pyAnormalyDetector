@@ -306,8 +306,8 @@ wrappers source it.
 `anomdec-detect`, `anomdec-detect-fast` and `anomdec-update-stats` each take an
 exclusive lock (`lock_dir`, default `/tmp/anomdec/locks`) for the whole run, so a
 scheduled run and an on-demand manual run of the same command can never overlap.
-This matters because concurrent runs race on the shared admdb accumulators and on
-the `{ds}_updates` watermark, which can double-count a slice or lose one.
+This matters because concurrent runs race on the shared admdb stats tables and on
+the `{ds}_*_updates` watermarks, and can interleave writes for the same item.
 
 The lock lives in the tool rather than in the cron wrapper on purpose: a
 shell-level `flock` around the wrapper only guards cron against cron, and a

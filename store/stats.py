@@ -109,8 +109,14 @@ class HourStatsStore(BaseStore):
         )
 
 
-class UpdatesStore(BaseStore):
-    """Tracks the epoch range covered by the last stats update."""
+class _UpdatesStore(BaseStore):
+    """Tracks the epoch range covered by the last stats update.
+
+    History (hourly) and trends (daily) get their own table.  They used to share
+    a single `{ds}_updates` row, so each pipeline overwrote the other's
+    watermark — the daily trends batch would read back the 3-hour window written
+    by the hourly detection run an hour earlier.
+    """
 
     _DDL = """
         CREATE TABLE IF NOT EXISTS {table} (
@@ -119,9 +125,6 @@ class UpdatesStore(BaseStore):
             endep    INTEGER
         )
     """
-
-    def _table_suffix(self) -> str:
-        return "updates"
 
     def get(self) -> tuple[int, int]:
         row = self._db.select1(f"SELECT startep, endep FROM {self._table} WHERE id = 1")
@@ -133,3 +136,13 @@ class UpdatesStore(BaseStore):
             f"ON CONFLICT (id) DO UPDATE SET startep = EXCLUDED.startep, endep = EXCLUDED.endep",
             (int(startep), int(endep)),
         )
+
+
+class HistoryUpdatesStore(_UpdatesStore):
+    def _table_suffix(self) -> str:
+        return "history_updates"
+
+
+class TrendsUpdatesStore(_UpdatesStore):
+    def _table_suffix(self) -> str:
+        return "trends_updates"

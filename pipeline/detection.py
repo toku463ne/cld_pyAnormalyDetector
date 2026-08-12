@@ -2,7 +2,7 @@
 DetectionPipeline — hourly execution (lightweight, DB-lookup + arithmetic only).
 
 Flow per data source:
-  1. Update history_stats (incremental rolling stats on recent history).
+  1. Update history_stats (window mean/std over the recent history window).
   2. Fetch history_stats, trends_stats, hour_stats for all items (batch).
   3. Run ZScoreDetector + SeasonalDetector (O(1)/item, no raw history needed).
   4. For items with any score > 0: fetch raw history, run ChangepointDetector.
@@ -20,7 +20,12 @@ from db.postgresql import PostgreSqlDB
 from ingestion.factory import get_data_source
 from ingestion.base import DataSource, ItemDetail
 from store.history import HistoryStore
-from store.stats import TrendsStatsStore, HistoryStatsStore, HourStatsStore, UpdatesStore
+from store.stats import (
+    TrendsStatsStore,
+    HistoryStatsStore,
+    HourStatsStore,
+    HistoryUpdatesStore,
+)
 from store.anomalies import AnomaliesStore
 from features.rolling_stats import update_rolling_stats
 from features.onset import compute_onsets
@@ -65,7 +70,7 @@ class DetectionPipeline:
         hist_stats_store = HistoryStatsStore(ds_name, db)
         trends_stats_store = TrendsStatsStore(ds_name, db)
         hour_store = HourStatsStore(ds_name, db)
-        updates_store = UpdatesStore(ds_name, db)
+        updates_store = HistoryUpdatesStore(ds_name, db)
         anomaly_store = AnomaliesStore(ds_name, db)
 
         item_ids = src.get_item_ids()
@@ -206,15 +211,13 @@ class DetectionPipeline:
         self,
         src: DataSource,
         store: HistoryStatsStore,
-        updates_store: UpdatesStore,
+        updates_store: HistoryUpdatesStore,
         ds_cfg: DataSourceConfig,
         item_ids: list[int],
         endep: int,
     ) -> None:
-        old_startep, old_endep = updates_store.get()
         retention_secs = ds_cfg.history_retention * ds_cfg.history_interval
         startep = endep - retention_secs
-        diff_startep = old_endep + 1 if old_endep > 0 else startep
 
         batch_size = ds_cfg.batch_size
         for i in range(0, len(item_ids), batch_size):
@@ -226,9 +229,7 @@ class DetectionPipeline:
                 store=store,
                 data_df=hist_df,
                 startep=startep,
-                diff_startep=diff_startep,
                 endep=endep,
-                old_startep=old_startep,
                 value_col="value",
                 batch_size=batch_size,
             )

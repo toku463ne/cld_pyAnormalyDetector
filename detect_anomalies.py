@@ -71,14 +71,20 @@ def _report_blocked(exc: AlreadyRunning) -> None:
 def _init_stores(cfg) -> None:
     from db.postgresql import PostgreSqlDB
     from store.history import HistoryStore
-    from store.stats import TrendsStatsStore, HistoryStatsStore, HourStatsStore, UpdatesStore
+    from store.stats import (
+        TrendsStatsStore,
+        HistoryStatsStore,
+        HourStatsStore,
+        HistoryUpdatesStore,
+        TrendsUpdatesStore,
+    )
     from store.anomalies import AnomaliesStore
 
     db = PostgreSqlDB(cfg.admdb)
     for ds_name in cfg.data_sources:
         for StoreClass in (
             HistoryStore, TrendsStatsStore, HistoryStatsStore,
-            HourStatsStore, UpdatesStore, AnomaliesStore,
+            HourStatsStore, HistoryUpdatesStore, TrendsUpdatesStore, AnomaliesStore,
         ):
             store = StoreClass(ds_name, db)
             store.drop()
