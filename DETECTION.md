@@ -1179,6 +1179,15 @@ the whole retained set. Cluster ids are assigned per cycle, so the dashboard's
 collapse keys now include `created` — otherwise cluster `0` from Monday and
 cluster `0` from Tuesday would be folded together.
 
+**Evaluating this needs a multi-cycle replay** — `anomdec-export-cycles` writes
+one span that replays as N consecutive hourly cycles (one dataset rather than N
+snapshots, since 14 days of trends barely change between cycles), and
+`python -m evaluation.replay_cycles --dataset ...` runs it with the same
+detect-once + retain logic, reporting per-cycle new/retained counts and sweeping
+`--max-age`.  A "missed" item is only counted when its onset falls inside the
+replayed span; one that started earlier would have been caught in a cycle the
+export does not contain.
+
 **Why the backtester's recall collapses (0.120 → 0.013) and why that number is
 not the regression it looks like.** The backtester scores one cycle against
 every labelled anomaly, i.e. it assumes an anomaly should be detected in *every*
@@ -1186,8 +1195,8 @@ cycle — precisely the behaviour being removed. Under detect-once each incident
 is caught in the cycle its onset falls in and lives in the retained set
 afterwards, which the harness has no notion of. Precision goes to **1.000** on
 that same run, which is the part of the signal that remains meaningful.
-Evaluating this properly needs a multi-cycle replay; `tests/` pins the gate's
-behaviour, and the four-cycle replay used to size `max_age_secs` is described
+`tests/unit/test_replay_cycles.py` pins the replay's semantics on synthetic
+cycles, and the four-cycle replay used to size `max_age_secs` is described
 above.
 
 **Known limitation of that sizing.** The four exports available are 4.7 h, 2 h
