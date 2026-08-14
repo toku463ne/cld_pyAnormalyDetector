@@ -192,6 +192,12 @@ metric_categories:
     # recovers all five.
     # An incident gets ~3 chances to be caught, since three consecutive hourly
     # runs still cover its onset.  Unresolvable onset = kept (fail-open).
+    #
+    # The onset here is "when it became ANOMALOUS", not "when the level moved".
+    # For anything with a daily cycle those differ: a VM whose memory climbs
+    # every night has its level regime start at 01:00, but the anomaly is that it
+    # never came back down, knowable only at 10:00.  Using the level regime drops
+    # exactly those findings -- 3 of 22 incidents in a real 24-cycle replay.
     enabled: true
     max_age_secs: 0
     floor: 0.0

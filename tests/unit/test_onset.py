@@ -4,7 +4,7 @@ import pandas as pd
 
 from config.schema import ClusteringConfig
 from clustering.dbscan import cluster_anomalies
-from features.onset import compute_onsets
+from features.onset import compute_anomaly_onsets, compute_onsets
 
 HOUR = 3600
 
@@ -177,3 +177,99 @@ def test_constraint_can_only_split_never_merge():
         hist, _stats({1: 0.0, 2: 0.0}), [1, 2], cfg, onsets={1: 1_000_000, 2: 1_000_000}
     )
     assert not _shares_cluster(cl, 1, 2)
+
+
+# ----------------------------------------------------------------------
+# compute_anomaly_onsets — when it became ANOMALOUS (DETECTION.md §8.12)
+# ----------------------------------------------------------------------
+
+HOUR = 3600
+
+
+def _ao_hourly(itemid, values, endep):
+    """`values` newest-last, one per hour ending at endep."""
+    n = len(values)
+    return pd.DataFrame({
+        "itemid": itemid,
+        "clock": [endep - (n - 1 - i) * HOUR for i in range(n)],
+        "value_avg": values,
+    })
+
+
+def _ao_hour_stats(itemid, per_hour: dict[int, tuple[float, float]]):
+    return pd.DataFrame([
+        {"itemid": itemid, "hour_of_day": h, "mean": m, "std": s, "cnt": 14}
+        for h, (m, s) in per_hour.items()
+    ])
+
+
+def _ao_stats(itemid, mean, std):
+    return pd.DataFrame({"itemid": [itemid], "mean": [mean], "std": [std], "cnt": [336]})
+
+
+def test_daily_cycle_onset_is_when_it_failed_to_come_down():
+    """The case the level-regime onset gets wrong.
+
+    A VM's memory rises every night and falls each morning.  This night it rose
+    normally and then stayed up.  The anomaly begins when it should have fallen,
+    not when it rose.
+    """
+    endep = 1_700_000_000 - (1_700_000_000 % HOUR)      # aligned to the hour
+    # last 6 hours: still high, while the last two of those hours are normally low
+    values = [40.0] * 6
+    trends = _ao_hourly(1, values, endep)
+    hours = {}
+    for k in range(6):
+        h = int(((endep - k * HOUR) % 86400) // 3600)
+        # the two most recent hours are normally quiet, the earlier ones are not
+        hours[h] = (5.0, 1.0) if k < 2 else (40.0, 15.0)
+    onsets = compute_anomaly_onsets(
+        trends, _ao_stats(1, 20.0, 30.0), _ao_hour_stats(1, hours), endep,
+        window_secs=3 * HOUR,
+    )
+    assert 1 in onsets
+    # anomalous only for the hours whose baseline is quiet -> ~1 hour back, not 6
+    assert (endep - onsets[1]) <= 2 * HOUR
+
+
+def test_clean_step_dates_the_step():
+    endep = 1_700_000_000 - (1_700_000_000 % HOUR)
+    values = [10.0] * 8 + [500.0] * 4
+    trends = _ao_hourly(1, values, endep)
+    hours = {int(((endep - k * HOUR) % 86400) // 3600): (10.0, 1.0) for k in range(12)}
+    onsets = compute_anomaly_onsets(
+        trends, _ao_stats(1, 10.0, 1.0), _ao_hour_stats(1, hours), endep, window_secs=HOUR,
+    )
+    assert 1 in onsets
+    age_h = (endep - onsets[1]) / HOUR
+    assert 3 <= age_h <= 4, age_h
+
+
+def test_item_not_anomalous_now_is_absent():
+    endep = 1_700_000_000 - (1_700_000_000 % HOUR)
+    trends = _ao_hourly(1, [10.0] * 12, endep)
+    hours = {int(((endep - k * HOUR) % 86400) // 3600): (10.0, 1.0) for k in range(12)}
+    onsets = compute_anomaly_onsets(
+        trends, _ao_stats(1, 10.0, 1.0), _ao_hour_stats(1, hours), endep, window_secs=HOUR,
+    )
+    assert onsets == {}
+
+
+def test_missing_baseline_yields_no_onset():
+    endep = 1_700_000_000 - (1_700_000_000 % HOUR)
+    trends = _ao_hourly(1, [500.0] * 6, endep)
+    assert compute_anomaly_onsets(
+        trends, pd.DataFrame(), pd.DataFrame(), endep, window_secs=HOUR
+    ) == {}
+
+
+def test_brief_dip_inside_the_run_is_tolerated():
+    endep = 1_700_000_000 - (1_700_000_000 % HOUR)
+    values = [10.0] * 6 + [500.0, 500.0, 10.0, 500.0, 500.0, 500.0]
+    trends = _ao_hourly(1, values, endep)
+    hours = {int(((endep - k * HOUR) % 86400) // 3600): (10.0, 1.0) for k in range(12)}
+    onsets = compute_anomaly_onsets(
+        trends, _ao_stats(1, 10.0, 1.0), _ao_hour_stats(1, hours), endep,
+        window_secs=HOUR, tolerance=2,
+    )
+    assert (endep - onsets[1]) / HOUR >= 4     # walked past the single dip

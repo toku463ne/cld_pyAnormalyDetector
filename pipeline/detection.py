@@ -30,7 +30,7 @@ from store.stats import (
 from store.anomalies import AnomaliesStore
 from features.rolling_stats import update_rolling_stats
 from features.staleness import split_stale
-from features.onset import compute_onsets
+from features.onset import compute_anomaly_onsets, compute_onsets
 from detectors.zscore import ZScoreDetector
 from detectors.changepoint import ChangepointDetector
 from detectors.seasonal import SeasonalDetector
@@ -157,14 +157,27 @@ class DetectionPipeline:
         final_scores = ensemble.combine(scores_per_detector)
 
         # --- Step 5a: onsets, then category / magnitude / duration gating ---
-        # Onsets are needed by the recency gate (is this a *new* excursion?) as
-        # well as by clustering, so resolve them once for the scored items.
-        onsets = self._compute_onsets(
-            src, ds_cfg, trends_stats, [s.item_id for s in final_scores], endep
+        # Two different questions, two different onsets, one trends fetch:
+        #   clustering asks "did these move at the same time" -> level regime,
+        #   recency asks "is this finding new" -> when it became anomalous.
+        # For a metric with a daily cycle those differ by hours (DETECTION.md
+        # §8.12), so using the level regime for recency drops exactly the
+        # "it didn't come back down" findings.
+        scored_ids = [s.item_id for s in final_scores]
+        scored_trends = self._fetch_trends(src, ds_cfg, scored_ids, endep)
+        onsets = self._level_onsets(ds_cfg, scored_trends, trends_stats)
+        anomaly_onsets = compute_anomaly_onsets(
+            scored_trends,
+            trends_stats,
+            hour_store.read(scored_ids) if scored_ids else pd.DataFrame(),
+            endep,
+            window_secs=ds_cfg.history_retention * ds_cfg.history_interval,
+            zscore_lambda=ds_cfg.detectors.zscore.lambda_threshold,
+            seasonal_lambda=ds_cfg.detectors.seasonal.lambda_threshold,
         )
         final_scores = self._apply_gating(
             src, hist_store, ds_cfg, final_scores, history_stats, trends_stats,
-            candidate_history_df, endep, onsets,
+            candidate_history_df, endep, anomaly_onsets,
         )
 
         # --- Step 5b: apply anomaly_filters ---
@@ -483,19 +496,16 @@ class DetectionPipeline:
         """
         if ds_cfg.clustering.max_onset_gap <= 0:
             return None
-
-        startep = endep - ds_cfg.trends_retention * 86400
-        batch_size = ds_cfg.batch_size
-        frames: list[pd.DataFrame] = []
-        for i in range(0, len(item_ids), batch_size):
-            df = src.get_trends(startep, endep, item_ids[i : i + batch_size])
-            if not df.empty:
-                frames.append(df)
-        if not frames:
+        trends_df = self._fetch_trends(src, ds_cfg, item_ids, endep)
+        if trends_df.empty:
             logger.debug("onset: no trends for %d item(s); constraint inactive", len(item_ids))
             return {}
+        return self._level_onsets(ds_cfg, trends_df, trends_stats)
 
-        trends_df = pd.concat(frames, ignore_index=True)
+    @staticmethod
+    def _level_onsets(
+        ds_cfg: DataSourceConfig, trends_df: pd.DataFrame, trends_stats: pd.DataFrame
+    ) -> dict[int, int]:
         return compute_onsets(
             trends_df,
             trends_stats,
@@ -504,3 +514,18 @@ class DetectionPipeline:
             tolerance=ds_cfg.clustering.onset_tolerance,
             recent_samples=ds_cfg.clustering.onset_recent_samples,
         )
+
+    @staticmethod
+    def _fetch_trends(
+        src: DataSource, ds_cfg: DataSourceConfig, item_ids: list[int], endep: int
+    ) -> pd.DataFrame:
+        """Trends over the retention window, in batch_size chunks."""
+        if not item_ids:
+            return pd.DataFrame()
+        startep = endep - ds_cfg.trends_retention * 86400
+        frames: list[pd.DataFrame] = []
+        for i in range(0, len(item_ids), ds_cfg.batch_size):
+            df = src.get_trends(startep, endep, item_ids[i : i + ds_cfg.batch_size])
+            if not df.empty:
+                frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

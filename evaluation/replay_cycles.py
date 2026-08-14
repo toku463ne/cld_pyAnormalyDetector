@@ -42,7 +42,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.zscore import ZScoreDetector
 from features.baseline import baseline_sigma, intra_std_from_range, recurring_peak_stats
 from features.gating import apply_gates, magnitude_suppressed, select_rescued
-from features.onset import compute_onsets
+from features.onset import compute_anomaly_onsets, compute_onsets
 from ingestion.factory import get_data_source
 from pipeline.filters import apply_anomaly_filters, apply_item_filters
 
@@ -129,18 +129,26 @@ def run_cycle(
         sigma=ds_cfg.clustering.sigma, tolerance=ds_cfg.clustering.onset_tolerance,
         recent_samples=ds_cfg.clustering.onset_recent_samples,
     )
+    # Recency asks a different question than clustering: not "when did the level
+    # move" but "when did this become anomalous" (DETECTION.md §8.12).
+    anomaly_onsets = compute_anomaly_onsets(
+        tr_window, ts, hour_stats, endep,
+        window_secs=win_secs,
+        zscore_lambda=ds_cfg.detectors.zscore.lambda_threshold,
+        seasonal_lambda=ds_cfg.detectors.seasonal.lambda_threshold,
+    )
     scores = apply_gates(
         scores, item_keys={i: d.key_ for i, d in details.items()},
         history_stats=hs, trends_stats=ts, cfg=ds_cfg.metric_categories,
         min_score=ds_cfg.ensemble.min_score, history_df=hist,
         history_interval=ds_cfg.history_interval,
-        onsets=onsets, endep=endep, recency_max_age=max_age,
+        onsets=anomaly_onsets, endep=endep, recency_max_age=max_age,
     )
     scores = apply_anomaly_filters(scores, details, hs, ts, ds_cfg.anomaly_filters)
 
     confirmed = [s for s in scores if s.is_anomaly]
     if not confirmed:
-        return [], {}, onsets
+        return [], {}, anomaly_onsets
     candidates = (
         magnitude_suppressed(scores, ds_cfg.ensemble.min_score)
         if ds_cfg.clustering.rescue_same_incident else []
@@ -155,7 +163,8 @@ def run_cycle(
         item_keys={i: d.key_ for i, d in details.items()}, onsets=onsets,
     )
     rescued = select_rescued(candidates, clusters, [s.item_id for s in confirmed])
-    return [s.item_id for s in confirmed] + [r.item_id for r in rescued], clusters, onsets
+    return ([s.item_id for s in confirmed] + [r.item_id for r in rescued],
+            clusters, anomaly_onsets)
 
 
 def replay(dataset: str, cfg, max_age: int, recency: bool) -> dict:

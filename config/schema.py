@@ -266,6 +266,14 @@ class RecencyConfig(BaseModel):
     An incident gets roughly three chances to be caught, since three consecutive
     hourly runs still have its onset inside the window.  An item whose onset
     cannot be resolved is kept (fail-open, like every other gate).
+
+    The onset this reads is `compute_anomaly_onsets` — when the item became
+    **anomalous**, not when its level last moved.  Those differ for anything with
+    a daily cycle: a VM whose memory climbs every night has its level regime
+    start at 01:00, but the anomaly is that it never came back down, which is
+    only knowable at 10:00.  Judged on the level regime such a finding looks 9 h
+    stale and is dropped; judged on when it became anomalous it is new, which is
+    what it is.  See DETECTION.md §8.12.
     """
     enabled: bool = False
     max_age_secs: int = 0     # 0 = history_retention x history_interval

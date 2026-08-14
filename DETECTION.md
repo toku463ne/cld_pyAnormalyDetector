@@ -402,8 +402,12 @@ single real incident — five `IPX012 unbound` counters fell into the 2.1 h and
 all five.
 
 An incident gets roughly three chances, since three consecutive hourly runs
-still cover its onset. Onsets are resolved once per cycle and shared with
-clustering (§3.3).
+still cover its onset.
+
+The onset read here is `features/onset.py::compute_anomaly_onsets` — **when the
+item became anomalous**, which is a different question from the level-regime
+onset clustering uses (§3.3). Both come from one trends fetch per cycle. Using
+the level regime here drops every "it never came back down" finding; see §8.12.
 
 **Idle baseline** — a metric that reads zero whenever its resource is idle
 (VMware guest disk latency, outstanding-IO depth, a rarely-used counter) has a
@@ -703,7 +707,7 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `metric_categories.categories[].weight` | per-category | prior importance by metric type |
 | `metric_categories.duration.*` | 600 → 3600 s | suppress brief spikes |
 | `metric_categories.idle_baseline.max_zero_ratio` | 0.8 | baseline zero more often than this → require an unprecedented level (§2.6) |
-| `metric_categories.recency.max_age_secs` | 0 | how old an onset may be (§2.6); 0 = window + one trends interval |
+| `metric_categories.recency.max_age_secs` | 0 | how old the *anomaly* onset may be (§2.6); 0 = window + one trends interval |
 | `anomaly_keep_secs` | 259200 | how long a recorded incident stays in the DB and on the dashboard |
 | `metric_categories.recurring_peak.min_episodes` | 9 | baseline excursions that make an item a habitual peaker (§2.6); lower to suppress more |
 | `metric_categories.recurring_peak.k_sigma` | 2.0 | sigma multiple a bucket max must clear to open an episode |
@@ -1204,3 +1208,61 @@ and 2 h apart rather than hourly, so the replay under-samples what production
 sees and understates the design. The quantisation argument for the one-interval
 margin does not depend on the sampling, but the miss rate observed in the replay
 is pessimistic.
+
+### 8.12 The recency gate was reading the wrong onset (fixed)
+
+§8.11 shipped the recency gate reading `compute_onsets`, i.e. **when the item's
+level regime began**. A 24-cycle replay of real production data then lost 3 of 22
+incidents, all reported as "detectors first saw it 9.2 h after onset". That
+number looked like detection lag. It was not.
+
+Take `564db009 vm.memory.pusage`, one of the three. Its hour-of-day baseline:
+
+| hours | `hour_stats.std` | what the VM does |
+|---|---|---|
+| 10–23 | 0.5–1.2 | sits at ~5 %, quiet |
+| 00–09 | 10–20 | nightly batch, swings widely |
+
+The excursion: memory rose at 01:00 to ~44 % and **stayed there**.
+
+```
+01:05  hour 1   recent 24.4  baseline 18.1 ± 18.0   z = 0.35   correctly silent
+04:05  hour 4   recent 42.4  baseline 18.1 ± 17.9   z = 1.36   correctly silent
+09:05  hour 9   recent 44.4  baseline 20.8 ± 20.3   z = 1.16   correctly silent
+10:05  hour 10  recent 44.1  baseline  5.4 ±  0.8   z = 49.25  fires
+```
+
+Rising at 01:00 is *normal* for this VM, and the seasonal detector says so. The
+anomaly is that it never came back down, and that is only knowable at 10:00.
+Nothing was late: the detectors fired the moment the behaviour became
+distinguishable from normal.
+
+So there are two events here, and the gate was comparing across them — the level
+regime began at 01:00 (a normal nightly rise, not an anomaly at all), while the
+anomaly began at 10:00. Anything with a daily cycle has this shape, which is a
+large share of infrastructure metrics.
+
+**Fix:** `compute_anomaly_onsets` walks back in whole hours from `endep`, asking
+at each step the question the detectors ask at that moment — does the window mean
+ending there disagree with that hour of day, or with the long baseline — and
+returns the start of the current unbroken anomalous run. Baselines are computed
+once and reused across steps, so it costs one pass over the window plus ~48
+lookups per item (8 ms for 12 items on a real export).
+
+On the export that produced the failure:
+
+| item | level-regime onset | anomaly onset |
+|---|---|---|
+| `vm.memory.pusage`, `…memory.size.usage.guest` (×2 hosts) | 01:00 (9.1 h) | **10:05 (0.0 h)** |
+| `trendavg.3Mago.call.stats.*` | 01:00 (9.1 h) | **10:05 (0.0 h)** |
+| `IMTDB123 mssql.cache_*` (×3) | 01:00 (9.1 h) | 01:05 (9.0 h) |
+| `sug-docker011 cpu_usage.*` (×3) | 07:00 (3.1 h) | 07:05 (3.0 h) |
+
+The three that were lost now read as brand new. The `IMTDB123` items stay at
+9 h — correctly: they have been continuously anomalous since 01:05 and were
+recorded in the cycle that caught them, so the gate skipping them now is the
+dedup working, not a miss. Replaying that export: **4 of 11 recorded → 9 of 11**.
+
+Clustering keeps the level-regime onset (§3.3): "did these two items move at the
+same time" is a question about levels, and both onsets come from the same trends
+fetch.

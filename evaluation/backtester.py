@@ -41,7 +41,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.ensemble import EnsembleDetector
 from clustering.dbscan import cluster_anomalies
 from features.gating import apply_gates, category_weight, classify
-from features.onset import compute_onsets
+from features.onset import compute_anomaly_onsets
 from features.baseline import baseline_sigma, intra_std_from_range, recurring_peak_stats
 from evaluation.metrics import (
     compute_clustering_metrics,
@@ -188,12 +188,11 @@ def run_offline_eval(
     item_keys = {d.item_id: d.key_ for d in src.get_item_details(item_ids)}
     cat_cfg = ds_config.metric_categories
     # The recency gate needs onsets, exactly as the runtime pipeline resolves them.
-    onsets = compute_onsets(
-        trends_df, trends_stats,
-        level_tol=ds_config.clustering.onset_level_tol,
-        sigma=ds_config.clustering.sigma,
-        tolerance=ds_config.clustering.onset_tolerance,
-        recent_samples=ds_config.clustering.onset_recent_samples,
+    onsets = compute_anomaly_onsets(
+        trends_df, trends_stats, hour_stats, endep,
+        window_secs=ds_config.history_retention * ds_config.history_interval,
+        zscore_lambda=ds_config.detectors.zscore.lambda_threshold,
+        seasonal_lambda=ds_config.detectors.seasonal.lambda_threshold,
     )
     final_scores = apply_gates(
         final_scores,
