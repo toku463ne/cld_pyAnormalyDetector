@@ -3,7 +3,8 @@ DetectionPipeline — hourly execution (lightweight, DB-lookup + arithmetic only
 
 Flow per data source:
   1. Update history_stats (window mean/std over the recent history window).
-  2. Fetch history_stats, trends_stats, hour_stats for all items (batch).
+  2. Fetch history_stats, trends_stats, hour_stats for all items (batch), and
+     drop items that have stopped reporting.
   3. Run ZScoreDetector + SeasonalDetector (O(1)/item, no raw history needed).
   4. For items with any score > 0: fetch raw history, run ChangepointDetector.
   5. EnsembleDetector → final AnomalyScore list.
@@ -28,6 +29,7 @@ from store.stats import (
 )
 from store.anomalies import AnomaliesStore
 from features.rolling_stats import update_rolling_stats
+from features.staleness import split_stale
 from features.onset import compute_onsets
 from detectors.zscore import ZScoreDetector
 from detectors.changepoint import ChangepointDetector
@@ -88,6 +90,20 @@ class DetectionPipeline:
         history_stats = hist_stats_store.read(item_ids)
         current_hour = (endep % 86400) // 3600
         hour_stats = hour_store.read(item_ids, hour_of_day=current_hour)
+
+        # Items that have gone silent must not be scored: their stats describe a
+        # window that no longer has data, so every detector saturates.
+        history_stats, stale_ids = split_stale(
+            history_stats, endep, ds_cfg.staleness_secs
+        )
+        if stale_ids:
+            logger.info(
+                "[%s] skipping %d stale item(s) (no history newer than %ds)",
+                ds_name,
+                len(stale_ids),
+                ds_cfg.staleness_secs,
+                extra={"n_stale": len(stale_ids), "item_ids": stale_ids[:50]},
+            )
 
         if trends_stats.empty or history_stats.empty:
             logger.warning("[%s] insufficient stats, skipping", ds_name)
@@ -182,7 +198,9 @@ class DetectionPipeline:
         self._write_anomalies(
             src, anomaly_store, trends_stats, ds_name, all_anomalies, endep, ds_cfg
         )
-        anomaly_store.update_cluster_ids({i: clusters.get(i, -1) for i in all_ids})
+        anomaly_store.update_cluster_ids(
+            {i: clusters.get(i, -1) for i in all_ids}, created=endep
+        )
         anomaly_store.delete_before(endep - ds_cfg.anomaly_keep_secs)
 
         return all_ids
@@ -220,18 +238,28 @@ class DetectionPipeline:
         startep = endep - retention_secs
 
         batch_size = ds_cfg.batch_size
+        dropped: list[int] = []
         for i in range(0, len(item_ids), batch_size):
             batch = item_ids[i : i + batch_size]
             hist_df = src.get_history(startep, endep, batch)
-            if hist_df.empty:
-                continue
-            update_rolling_stats(
-                store=store,
-                data_df=hist_df,
-                startep=startep,
-                endep=endep,
-                value_col="value",
-                batch_size=batch_size,
+            # Do not skip empty batches: items that returned nothing must have
+            # their stale stats rows deleted, not left frozen.
+            dropped.extend(
+                update_rolling_stats(
+                    store=store,
+                    data_df=hist_df,
+                    startep=startep,
+                    endep=endep,
+                    value_col="value",
+                    batch_size=batch_size,
+                    expected_item_ids=batch,
+                )
+            )
+        if dropped:
+            logger.info(
+                "dropped history_stats for %d item(s) with no samples in window",
+                len(dropped),
+                extra={"n_dropped": len(dropped), "item_ids": dropped[:50]},
             )
         updates_store.set(startep, endep)
 

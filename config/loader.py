@@ -61,6 +61,7 @@ _CASCADE_KEYS = (
     "history_retention",
     "trends_retention",
     "anomaly_keep_secs",
+    "staleness_secs",
     "detectors",
     "ensemble",
     "clustering",

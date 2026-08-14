@@ -37,6 +37,10 @@ history_interval: 600        # seconds per history record
 history_retention: 18        # keep last N history records (~3h)
 trends_retention: 14         # days of trends to retain for stats
 anomaly_keep_secs: 86400     # keep anomalies for 1 day
+# An item whose newest history sample is older than this has stopped reporting;
+# its window stats no longer describe anything, so scoring it just produces a
+# saturated score every hour.  Skip it instead.  0 disables the check.
+staleness_secs: 3600
 
 ##################################################
 #  detectors (cascaded to data_sources)

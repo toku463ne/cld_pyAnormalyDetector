@@ -3,7 +3,7 @@ anomdec-export-anomalies — export raw data for the items currently flagged (th
 ones shown on the anomdec_detected dashboard), so they can be inspected offline.
 
 Reads the latest detection cycle from the {ds}_anomalies table, then dumps
-history/trends/items CSVs + an anomalies.csv (score, clusterid, host, key, change)
+history/trends/items CSVs + an anomalies.csv.gz (score, clusterid, host, key, change)
 and a labels.csv skeleton — the same dataset layout anomdec-label / the backtester
 consume. Tar the output dir and share it.
 
@@ -12,6 +12,7 @@ consume. Tar the output dir and share it.
 """
 from __future__ import annotations
 import argparse
+import json
 import logging
 
 import pandas as pd
@@ -58,14 +59,23 @@ def main() -> int:
     _export_csvs(src, ds_cfg, selected, endep, args.output)
     _write_label_files(selected, args.output)
 
-    # anomalies.csv: the detector's own view, for inspection
+    # anomalies.csv.gz: the detector's own view, for inspection.  `created` is
+    # what anomdec-label uses to mark the detection on the chart, so it has to
+    # be in here; detector_scores is JSONB, which pandas would otherwise write
+    # as a Python repr that json.loads cannot read.
     cols = [c for c in
-            ["itemid", "host_name", "item_name", "group_name", "clusterid",
-             "score", "trend_mean", "trend_std", "rescued", "detector_scores"]
+            ["itemid", "created", "host_name", "item_name", "group_name", "hostid",
+             "clusterid", "score", "trend_mean", "trend_std", "rescued",
+             "detector_scores"]
             if c in df.columns]
-    df[cols].to_csv(f"{args.output}/anomalies.csv", index=False)
+    out = df[cols].copy()
+    if "detector_scores" in out.columns:
+        out["detector_scores"] = out["detector_scores"].map(
+            lambda v: json.dumps(v) if isinstance(v, dict) else v
+        )
+    out.to_csv(f"{args.output}/anomalies.csv.gz", index=False, compression="gzip")
 
-    logger.info("wrote dataset to %s (history/trends/items + anomalies.csv + labels.csv)", args.output)
+    logger.info("wrote dataset to %s (history/trends/items + anomalies.csv.gz + labels.csv)", args.output)
     logger.info("share it: tar czf check.tar.gz -C %s .", args.output)
     return 0
 

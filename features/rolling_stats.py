@@ -17,6 +17,13 @@ still needed the full window fetched to do the subtraction.
 
 sum/sqr_sum/cnt are still written (the table columns exist and are useful for
 debugging), but they now describe the current window, not an all-time total.
+
+Items that report *nothing* inside the window need the same treatment for the
+same reason.  An upsert can only touch items present in the fetched frame, so an
+item that stops reporting used to keep its last-good row forever: a frozen
+`mean` compared against a baseline that keeps sliding, which saturates every
+detector that inner-joins on this table.  `expected_item_ids` closes that hole by
+deleting the rows of items that returned no samples.
 """
 from __future__ import annotations
 import logging
@@ -36,31 +43,52 @@ def update_rolling_stats(
     endep: int,
     value_col: str = "value",
     batch_size: int = 100,
-) -> None:
+    expected_item_ids: list[int] | None = None,
+) -> list[int]:
     """
     Recompute the window stats for every item present in data_df.
 
     Parameters
     ----------
-    store        : TrendsStatsStore or HistoryStatsStore
-    data_df      : DataFrame with columns [itemid, clock, <value_col>] covering
-                   the whole window [startep, endep]
-    startep      : start of the retention window (inclusive)
-    endep        : end of the retention window (inclusive)
-    value_col    : column name for the value ('value' or 'value_avg')
-    batch_size   : items per upsert batch
+    store             : TrendsStatsStore or HistoryStatsStore
+    data_df           : DataFrame with columns [itemid, clock, <value_col>] covering
+                        the whole window [startep, endep]
+    startep           : start of the retention window (inclusive)
+    endep             : end of the retention window (inclusive)
+    value_col         : column name for the value ('value' or 'value_avg')
+    batch_size        : items per upsert batch
+    expected_item_ids : items that were asked for.  Any of them with no sample
+                        inside the window has stopped reporting, so its stats row
+                        is deleted instead of being left frozen at the last value
+                        it ever reported.
+
+    Returns the item ids whose stats rows were deleted.
     """
-    if data_df.empty:
-        return
+    expected = [int(i) for i in expected_item_ids] if expected_item_ids else []
 
-    window = data_df[(data_df["clock"] >= startep) & (data_df["clock"] <= endep)]
-    if window.empty:
+    window = pd.DataFrame()
+    if not data_df.empty:
+        window = data_df[(data_df["clock"] >= startep) & (data_df["clock"] <= endep)]
+
+    present: set[int] = set()
+    if not window.empty:
+        present = {int(i) for i in window["itemid"].unique()}
+    else:
         logger.warning(
-            "no samples inside window [%d, %d]; stats left unchanged", startep, endep
+            "no samples inside window [%d, %d]; %d item(s) expected",
+            startep,
+            endep,
+            len(expected),
         )
-        return
 
-    _upsert_window(store, window, value_col, batch_size)
+    stale = [i for i in expected if i not in present]
+    if stale:
+        store.delete(stale)
+
+    if not window.empty:
+        _upsert_window(store, window, value_col, batch_size)
+
+    return stale
 
 
 def _upsert_window(
@@ -70,10 +98,16 @@ def _upsert_window(
     batch_size: int,
 ) -> None:
     agg = (
-        df.groupby("itemid")[value_col]
-        .agg(s="sum", sqr=lambda x: (x**2).sum(), cnt="count")
+        df.groupby("itemid")
+        .agg(
+            **{
+                "sum": (value_col, "sum"),
+                "sqr_sum": (value_col, lambda x: (x**2).sum()),
+                "cnt": (value_col, "count"),
+                "last_clock": ("clock", "max"),
+            }
+        )
         .reset_index()
-        .rename(columns={"s": "sum", "sqr": "sqr_sum"})
     )
     agg = agg[agg["cnt"] > 0].copy()
     if agg.empty:
@@ -87,7 +121,8 @@ def _upsert_window(
         / (agg["cnt"] - 1).clip(lower=1)
     ).clip(lower=0)
     agg["std"] = np.sqrt(variance).fillna(0)
+    agg["last_clock"] = agg["last_clock"].astype(int)
 
-    cols = ["itemid", "sum", "sqr_sum", "cnt", "mean", "std"]
+    cols = ["itemid", "sum", "sqr_sum", "cnt", "mean", "std", "last_clock"]
     for i in range(0, len(agg), batch_size):
         store.upsert(agg.iloc[i : i + batch_size][cols])

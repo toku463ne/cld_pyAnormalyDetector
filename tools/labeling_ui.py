@@ -68,6 +68,11 @@ def _drop_dup_header(df: pd.DataFrame, key: str) -> pd.DataFrame:
     return df[df[key] != key].copy()
 
 
+def _read_endep(d: Path) -> int:
+    p = d / "endep.txt"
+    return int(p.read_text().strip()) if p.exists() else 0
+
+
 def load_dataset(data_dir: str) -> dict:
     d = Path(data_dir)
 
@@ -91,10 +96,18 @@ def load_dataset(data_dir: str) -> dict:
     for c in ("value_min","value_avg","value_max"):
         trends[c] = pd.to_numeric(trends[c], errors="coerce").fillna(0.0)
 
-    anom_path = d / "anomalies.csv.gz"
-    if anom_path.exists():
+    # anomdec-export-anomalies used to write a plain anomalies.csv, so accept
+    # both spellings; datasets shared before that fix are still readable.
+    anom_path = next(
+        (p for p in (d / "anomalies.csv.gz", d / "anomalies.csv") if p.exists()), None
+    )
+    if anom_path is not None:
         anom = pd.read_csv(anom_path)
         anom["itemid"] = anom["itemid"].astype(int)
+        if "created" not in anom.columns:
+            # Older exports dropped it; without a created epoch _build_summary
+            # emits no detection marker at all.
+            anom["created"] = _read_endep(d)
     else:
         anom = pd.DataFrame(columns=["itemid","created","group_name",
                                      "host_name","item_name","clusterid",
@@ -117,7 +130,7 @@ def load_dataset(data_dir: str) -> dict:
     if not scores.empty:
         scores["itemid"] = scores["itemid"].astype(int)
 
-    endep = int((d / "endep.txt").read_text().strip()) if (d / "endep.txt").exists() else 0
+    endep = _read_endep(d)
 
     summary = _build_summary(anom, items, scores, hist["itemid"].unique().tolist())
 

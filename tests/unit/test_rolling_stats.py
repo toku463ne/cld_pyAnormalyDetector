@@ -29,6 +29,10 @@ class FakeStatsStore:
         vals = list(self.rows.values())
         return pd.DataFrame(vals) if vals else pd.DataFrame()
 
+    def delete(self, item_ids: list[int]) -> None:
+        for i in item_ids:
+            self.rows.pop(int(i), None)
+
 
 def _series(itemid: int, values: list[float], start: int, step: int = 3600) -> pd.DataFrame:
     return pd.DataFrame(
@@ -140,7 +144,8 @@ def test_empty_input_is_a_noop():
 
 
 def test_window_with_no_samples_leaves_stats_unchanged():
-    """A source outage must not wipe the baseline to something meaningless."""
+    """Without expected_item_ids the caller is not claiming to know which items
+    were asked for, so an empty window must not touch anything."""
     store = FakeStatsStore()
     df = _series(1, [1.0, 2.0, 3.0], start=0)
     update_rolling_stats(store, df, startep=0, endep=2 * 3600)
@@ -150,3 +155,67 @@ def test_window_with_no_samples_leaves_stats_unchanged():
     update_rolling_stats(store, df, startep=100 * 3600, endep=110 * 3600)
 
     assert store.rows[1] == before
+
+
+def test_last_clock_is_the_newest_sample_in_the_window():
+    store = FakeStatsStore()
+    df = _series(1, [1.0, 2.0, 3.0, 4.0], start=0)
+
+    update_rolling_stats(store, df, startep=0, endep=2 * 3600)
+
+    assert store.rows[1]["last_clock"] == 2 * 3600
+
+
+def test_item_with_no_samples_in_window_is_deleted():
+    """Regression: an item that stops reporting used to keep its last-good row
+    forever, so a frozen mean was compared against a baseline that kept sliding
+    and every detector saturated on it, every hour."""
+    store = FakeStatsStore()
+    both = pd.concat(
+        [_series(1, [1.0, 1.0, 1.0], start=0), _series(2, [5.0, 5.0, 5.0], start=0)],
+        ignore_index=True,
+    )
+    update_rolling_stats(store, both, startep=0, endep=2 * 3600, expected_item_ids=[1, 2])
+    assert set(store.rows) == {1, 2}
+
+    # Item 2 goes silent: only item 1 comes back from the source.
+    only_one = _series(1, [1.0, 1.0, 1.0], start=3 * 3600)
+    stale = update_rolling_stats(
+        store, only_one, startep=3 * 3600, endep=5 * 3600, expected_item_ids=[1, 2]
+    )
+
+    assert stale == [2]
+    assert set(store.rows) == {1}
+
+
+def test_empty_batch_deletes_every_expected_item():
+    """A whole batch of dead items returns an empty frame; the pipeline used to
+    `continue` past it, which is how the stale rows survived."""
+    store = FakeStatsStore()
+    df = _series(1, [1.0, 2.0], start=0)
+    update_rolling_stats(store, df, startep=0, endep=3600, expected_item_ids=[1])
+    assert store.rows
+
+    stale = update_rolling_stats(
+        store, pd.DataFrame(), startep=10 * 3600, endep=12 * 3600, expected_item_ids=[1, 2]
+    )
+
+    assert stale == [1, 2]
+    assert store.rows == {}
+
+
+def test_items_not_expected_are_left_alone():
+    """expected_item_ids scopes the deletion to the batch that was fetched."""
+    store = FakeStatsStore()
+    both = pd.concat(
+        [_series(1, [1.0, 1.0], start=0), _series(2, [5.0, 5.0], start=0)],
+        ignore_index=True,
+    )
+    update_rolling_stats(store, both, startep=0, endep=3600, expected_item_ids=[1, 2])
+
+    only_one = _series(1, [2.0, 2.0], start=2 * 3600)
+    update_rolling_stats(
+        store, only_one, startep=2 * 3600, endep=3 * 3600, expected_item_ids=[1]
+    )
+
+    assert set(store.rows) == {1, 2}

@@ -9,39 +9,57 @@ class _RollingStatsStore(BaseStore):
 
     _DDL = """
         CREATE TABLE IF NOT EXISTS {table} (
-            itemid  BIGINT PRIMARY KEY,
-            sum     FLOAT,
-            sqr_sum FLOAT,
-            cnt     INTEGER,
-            mean    FLOAT,
-            std     FLOAT
+            itemid     BIGINT PRIMARY KEY,
+            sum        FLOAT,
+            sqr_sum    FLOAT,
+            cnt        INTEGER,
+            mean       FLOAT,
+            std        FLOAT,
+            last_clock INTEGER
         )
     """
+
+    _COLS = ["itemid", "sum", "sqr_sum", "cnt", "mean", "std", "last_clock"]
+
+    def _ensure_table(self) -> None:
+        super()._ensure_table()
+        # last_clock was added after the table shipped; migrate in place.
+        self._db.exec_sql(
+            f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS last_clock INTEGER"
+        )
 
     def read(self, item_ids: list[int] | None = None) -> pd.DataFrame:
         where = ""
         if item_ids:
             where = f"WHERE itemid = ANY(ARRAY[{','.join(map(str, item_ids))}])"
         return self._db.read_sql(
-            f"SELECT itemid, sum, sqr_sum, cnt, mean, std FROM {self._table} {where}"
+            f"SELECT {', '.join(self._COLS)} FROM {self._table} {where}"
         )
 
     def upsert(self, df: pd.DataFrame) -> None:
-        """df must have columns: itemid, sum, sqr_sum, cnt, mean, std."""
+        """df must have columns: itemid, sum, sqr_sum, cnt, mean, std, last_clock."""
         if df.empty:
             return
-        records = list(
-            df[["itemid", "sum", "sqr_sum", "cnt", "mean", "std"]].itertuples(
-                index=False, name=None
-            )
-        )
+        records = list(df[self._COLS].itertuples(index=False, name=None))
+        assigns = ", ".join(f"{c} = EXCLUDED.{c}" for c in self._COLS[1:])
         sql = (
-            f"INSERT INTO {self._table} (itemid, sum, sqr_sum, cnt, mean, std) VALUES %s "
-            f"ON CONFLICT (itemid) DO UPDATE SET "
-            f"sum = EXCLUDED.sum, sqr_sum = EXCLUDED.sqr_sum, cnt = EXCLUDED.cnt, "
-            f"mean = EXCLUDED.mean, std = EXCLUDED.std"
+            f"INSERT INTO {self._table} ({', '.join(self._COLS)}) VALUES %s "
+            f"ON CONFLICT (itemid) DO UPDATE SET {assigns}"
         )
         self._db.execute_values(sql, records)
+
+    def delete(self, item_ids: list[int]) -> None:
+        """Drop the stats rows for the given items.
+
+        Called when an item reported no samples inside the retention window.
+        Leaving the row behind freezes `mean` at the last value the item ever
+        reported while the baseline keeps sliding, which makes every detector
+        that inner-joins on this table saturate forever.
+        """
+        if not item_ids:
+            return
+        ids = ",".join(str(int(i)) for i in item_ids)
+        self._db.exec_sql(f"DELETE FROM {self._table} WHERE itemid IN ({ids})")
 
     def existing_item_ids(self, item_ids: list[int]) -> tuple[list[int], list[int]]:
         """Returns (existing, new) split of item_ids."""
@@ -107,6 +125,13 @@ class HourStatsStore(BaseStore):
         return self._db.read_sql(
             f"SELECT itemid, hour_of_day, mean, std, cnt FROM {self._table} {where}"
         )
+
+    def delete(self, item_ids: list[int]) -> None:
+        """Drop every hour-of-day row for the given items (see _RollingStatsStore.delete)."""
+        if not item_ids:
+            return
+        ids = ",".join(str(int(i)) for i in item_ids)
+        self._db.exec_sql(f"DELETE FROM {self._table} WHERE itemid IN ({ids})")
 
 
 class _UpdatesStore(BaseStore):

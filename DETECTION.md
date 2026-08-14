@@ -79,8 +79,13 @@ window**, not an all-time total. The variance is clipped **before** the square
 root: floating-point cancellation in `sqr_sum - sum²/cnt` can go slightly
 negative and produce `NaN`.
 
-If the window contains no samples at all (source outage), the stored stats are
-left unchanged rather than wiped.
+Items that report **nothing** inside the window are handled explicitly. The
+caller passes the batch it asked for as `expected_item_ids`; any of those items
+missing from the fetched frame has its stats row **deleted**, and the newest
+sample in the window is stored as `last_clock`. Leaving the row behind would
+freeze `mean` at the last value the item ever reported while the baseline kept
+sliding — see §8.5. When `expected_item_ids` is not supplied the old behaviour
+holds and an empty window changes nothing.
 
 The critical property is that samples ageing out of the back of the window stop
 contributing: that is what lets a step change be absorbed into the baseline
@@ -415,8 +420,10 @@ This is the one place where clustering feeds back into the anomaly decision.
 
 Anomalies are written to `{ds}_anomalies` with the ensemble score, the
 per-detector breakdown as JSONB, and `rescued`. Cluster ids are assigned in a
-second pass (`update_cluster_ids`), and rows older than `anomaly_keep_secs`
-(default 1 day) are deleted each run.
+second pass (`update_cluster_ids`), scoped to the cycle being written — without
+that scope the reset step wiped the cluster ids of every retained row from
+earlier cycles. Rows older than `anomaly_keep_secs` (default 1 day) are deleted
+each run.
 
 ---
 
@@ -475,7 +482,7 @@ Jinja2 is rendered on the **raw file text** before YAML parsing — rendering af
 
 `_cascade_defaults` copies top-level keys into each `data_sources` entry when not
 overridden there: `batch_size`, `history_interval`, `history_retention`,
-`trends_retention`, `anomaly_keep_secs`, `detectors`, `ensemble`, `clustering`,
+`trends_retention`, `anomaly_keep_secs`, `staleness_secs`, `detectors`, `ensemble`, `clustering`,
 `metric_categories`, `item_filters`, `anomaly_filters`, `fast_detect`,
 `dashboards`.
 
@@ -485,6 +492,7 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 |---|---|---|
 | `history_interval` / `history_retention` | 600 / 18 | recent window ≈ 3 h |
 | `trends_retention` | 14 | days of baseline |
+| `staleness_secs` | 3600 | skip items whose newest history sample is older than this (0 = off, §8.5) |
 | `detectors.*.lambda_threshold` | 3.0 | z at which score = 0.5; saturates at 2λ |
 | `detectors.changepoint.cusum_h` / `cusum_k` | 5.0 / 0.5 | decision / slack, in std units |
 | `ensemble.min_score` | 0.7 | precision-first threshold |
@@ -595,3 +603,46 @@ explicitly marked as placeholders awaiting backtester tuning.
 `hour_of_day` comes straight from the epoch (§1.4), so the seasonal baseline is
 aligned to UTC rather than site-local time, and weekday/weekend patterns are not
 separated. Both are noted as future extensions in `CLAUDE.md`.
+
+### 8.5 Items that stopped reporting were flagged forever (fixed)
+
+Symptom: in the production export of 2026-08-14, **37 of 83 flagged items** came
+from three hosts (`new-ubu-24-1`, `new-ubu-24-2`, `IMTDB123`) that had stopped
+sending data roughly five days earlier. They had zero history samples in the
+3-hour window and their newest trends point was 87–119 hours old, yet every one
+of them scored exactly 1.0, every hour.
+
+The signature is visible in the detector breakdown: all 37 fired on
+`{zscore, seasonal}` and **none** on `changepoint` — changepoint needs the raw
+series, which does not exist for a silent item, so it cannot vote.
+
+Cause: an upsert can only touch items present in the fetched frame, and
+`_upsert_window` had no delete path (§1.3). `DetectionPipeline._update_history_stats`
+made it worse with `if hist_df.empty: continue`, which skipped a whole batch of
+dead items. So `{ds}_history_stats` kept its last-good row indefinitely: a frozen
+`h_mean` compared against a `trends_stats` / `hour_stats` baseline that kept
+sliding. Both DB-stat detectors saturate on that, and the duration gate fails
+open when there is no series to measure (§2.6), so nothing downstream could
+catch it.
+
+**Fix**, in two layers:
+
+1. `update_rolling_stats` takes `expected_item_ids` and deletes the stats rows of
+   items with no sample in the window; the empty-batch skip is gone. Applied to
+   `history_stats` (hourly) and to `trends_stats` + `hour_stats` (daily).
+2. A freshness guard: `last_clock` is stored alongside the window stats, and
+   items whose newest sample is older than `staleness_secs` (default 3600) are
+   dropped before the detectors run. Layer 1 catches complete silence; layer 2
+   catches an item still dribbling one sample per window.
+
+Skipped items are counted and logged with their ids rather than silently
+discarded. Detecting "collection stopped" as an alert in its own right is a
+separate concern — Zabbix's `nodata()` trigger is the right home for it.
+
+**Migration:** self-healing. `last_clock` is added with
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and a missing value counts as stale;
+the first run after deploying purges the accumulated rows.
+
+Covered by `tests/unit/test_rolling_stats.py`, `tests/unit/test_staleness.py`,
+and `tests/unit/test_staleness_production_sample.py`, which pins the numbers
+above against the real export.

@@ -72,13 +72,25 @@ class AnomaliesStore(BaseStore):
                 ),
             )
 
-    def update_cluster_ids(self, clusters: dict[int, int]) -> None:
-        self._db.exec_sql(f"UPDATE {self._table} SET clusterid = -1")
-        for item_id, cluster_id in clusters.items():
-            self._db.exec_sql(
-                f"UPDATE {self._table} SET clusterid = %s WHERE itemid = %s",
-                (int(cluster_id), int(item_id)),
-            )
+    def update_cluster_ids(self, clusters: dict[int, int], created: int | None = None) -> None:
+        """Assign cluster ids for one detection cycle.
+
+        `created` scopes the reset to that cycle.  Without it the reset clears
+        the cluster ids of every retained row, so the previous hours' groupings
+        are destroyed on every run.
+        """
+        where = f"WHERE created = {int(created)}" if created is not None else ""
+        self._db.exec_sql(f"UPDATE {self._table} SET clusterid = -1 {where}")
+        if not clusters:
+            return
+        # One statement instead of one per item: this runs every hour.
+        self._db.execute_values(
+            f"UPDATE {self._table} AS a SET clusterid = v.clusterid::integer "
+            f"FROM (VALUES %s) AS v(itemid, clusterid) "
+            f"WHERE a.itemid = v.itemid::bigint"
+            + (f" AND a.created = {int(created)}" if created is not None else ""),
+            [(int(i), int(c)) for i, c in clusters.items()],
+        )
 
     def delete_before(self, cutoff_ep: int) -> None:
         self._db.exec_sql(

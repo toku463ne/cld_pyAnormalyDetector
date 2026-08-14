@@ -245,6 +245,7 @@ class DataSourceConfig(BaseModel):
     history_retention: int = 18
     trends_retention: int = 14
     anomaly_keep_secs: int = 86400
+    staleness_secs: int = 3600
 
     detectors: DetectorsConfig = DetectorsConfig()
     ensemble: EnsembleConfig = EnsembleConfig()
@@ -310,6 +311,7 @@ class AppConfig(BaseModel):
     history_retention: int = 18
     trends_retention: int = 14
     anomaly_keep_secs: int = 86400
+    staleness_secs: int = 3600
     detectors: DetectorsConfig = DetectorsConfig()
     ensemble: EnsembleConfig = EnsembleConfig()
     clustering: ClusteringConfig = ClusteringConfig()
