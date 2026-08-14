@@ -90,7 +90,12 @@ ensemble:
 #  clustering (cascaded to data_sources)
 ##################################################
 clustering:
-  jaccard_eps: 0.1
+  # Minimum first-difference points before a correlation counts as evidence.
+  # The grid is detection_period / unitsecs; when that is tiny the Spearman
+  # coefficient is noise — at three differences two INDEPENDENT series land on
+  # distance exactly 0.0 one time in six, and only four distinct distances exist.
+  # Below this everything is left unclustered instead of grouped at random.
+  min_corr_points: 8
   # How members are grouped once the distances exist.
   #   complete : agglomerative; EVERY pair in a cluster within corr_eps
   #   average  : agglomerative on the mean inter-cluster distance
@@ -106,9 +111,11 @@ clustering:
   # Correlation distance threshold on first-differences over the history window.
   # Means different things per linkage, which is why the default moved with it:
   # a neighbour radius for dbscan (0.10 was the knee), a cap on the whole cluster
-  # for complete -- at 0.10 a genuine same-host docker trio splits on one 0.109
-  # pair, so it has to be looser.
-  corr_eps: 0.20
+  # for complete, so it has to be looser.  Re-tuned again once the grid stopped
+  # collapsing to a handful of points (min_corr_points above): on the finer grid
+  # the distances spread out and 0.30 dominates 0.20 on the incident labels --
+  # true pairs 32 -> 36 for one extra false pair.
+  corr_eps: 0.30
   raw_corr_min: 0.99   # raw-level channel: recover same-family monotonic ramps the diff channel fragments
   min_samples: 2
   sigma: 2.0                 # trends sample is "outside baseline" beyond mean ± sigma*std

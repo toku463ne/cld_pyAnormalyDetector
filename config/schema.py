@@ -73,7 +73,13 @@ class AnomalyFilterRule(BaseModel):
 
 
 class ClusteringConfig(BaseModel):
-    jaccard_eps: float = 0.1
+    # Minimum first-difference points a correlation needs before it counts as
+    # evidence.  The grid is `detection_period / unitsecs`, and when that comes
+    # out tiny the Spearman coefficient stops meaning anything: with three
+    # differences two *independent* series land on distance exactly 0.0 one time
+    # in six, and only four distinct distances exist at all.  Below this, every
+    # item is left unclustered rather than grouped at random.
+    min_corr_points: int = 8
     # How members are grouped once the distance matrix exists.
     #
     #   complete : agglomerative, every pair inside a cluster within corr_eps
@@ -97,8 +103,11 @@ class ClusteringConfig(BaseModel):
     # 0.2 was set when 14d of hourly trends were prepended, and on the short
     # window it merged everything that co-spiked).  For complete linkage it is a
     # cap on the *whole cluster*, so it has to be looser to hold a genuine group
-    # together -- at 0.10 a real same-host docker trio splits on one 0.109 pair.
-    corr_eps: float = 0.20
+    # together.  It also had to move again once the grid stopped collapsing to a
+    # handful of points (see _infer_unitsecs): on the finer grid the distance
+    # distribution spreads out, and 0.30 dominates 0.20 on the incident labels --
+    # true pairs 32 -> 36 for one extra false pair.
+    corr_eps: float = 0.30
     # Raw-correlation channel: two items sharing a metric family that correlate
     # in raw levels above this threshold are merged even if their first-difference
     # correlation is weak. This recovers monotonic-ramp groups (cumulative

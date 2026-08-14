@@ -7,6 +7,8 @@ from clustering.dbscan import (
     _build_charts,
     _correlation_distance_matrix,
     _fit_labels,
+    _infer_unitsecs,
+    _usable_items,
     cluster_anomalies,
 )
 
@@ -127,3 +129,63 @@ def test_cross_host_incident_still_groups():
     cl = cluster_anomalies(hist, tss, [11, 22, 33], ClusteringConfig())
     assert cl[11] == cl[22] >= 0
     assert cl[33] != cl[11]
+
+
+# ----------------------------------------------------------------------
+# Grid resolution: one coarse item must not blind everyone (§8.10)
+# ----------------------------------------------------------------------
+
+def _mixed_rate_history():
+    """Ten items at 60s plus two at 3600s, over three hours."""
+    rows = []
+    for iid in range(1, 11):
+        rows += [(iid, c, float(c % 7)) for c in range(0, 10800, 60)]
+    for iid in (91, 92):
+        rows += [(iid, c, 1.0) for c in range(0, 10800, 3600)]
+    return pd.DataFrame(rows, columns=["itemid", "clock", "value"])
+
+
+def test_unitsecs_is_not_dictated_by_the_coarsest_item():
+    """Taking the max collapsed a 180-sample series onto 4 hourly buckets."""
+    df = _mixed_rate_history()
+    assert _infer_unitsecs(df) == 60
+
+
+def test_too_coarse_items_are_dropped_rather_than_coarsening_the_grid():
+    df = _mixed_rate_history()
+    keep = _usable_items(df, list(range(1, 11)) + [91, 92], _infer_unitsecs(df))
+    assert 91 not in keep and 92 not in keep
+    assert set(range(1, 11)) <= set(keep)
+
+
+def test_grid_stays_fine_with_a_coarse_item_present():
+    df = _mixed_rate_history()
+    u = _infer_unitsecs(df)
+    charts = _build_charts(df, _usable_items(df, list(range(1, 11)) + [91, 92], u), unitsecs=u)
+    assert len(next(iter(charts.values()))) > 100     # was 4 when the max ruled
+
+
+def test_too_few_points_refuses_to_cluster():
+    """Three first differences are not evidence: two independent series land on
+    distance exactly 0.0 one time in six, so grouping would be a coin toss."""
+    clk = list(range(0, 4 * 3600, 3600))
+    rows = []
+    for iid, vals in [(1, [1.0, 5.0, 2.0, 9.0]), (2, [3.0, 8.0, 4.0, 12.0]),
+                      (3, [100.0, 1.0, 50.0, 2.0])]:
+        rows += [(iid, c, v) for c, v in zip(clk, vals)]
+    hist = pd.DataFrame(rows, columns=["itemid", "clock", "value"])
+    tss = pd.DataFrame({"itemid": [1, 2, 3], "mean": [1.0] * 3, "std": [1.0] * 3})
+    cl = cluster_anomalies(hist, tss, [1, 2, 3], ClusteringConfig(min_corr_points=8))
+    assert set(cl.values()) == {-1}
+
+
+def test_enough_points_still_clusters():
+    clk = list(range(0, 10800, 300))
+    shape = [float((i * 7) % 11) for i in range(len(clk))]
+    rows = []
+    for iid, vals in [(1, shape), (2, [v * 2 for v in shape]), (3, [5.0] * len(clk))]:
+        rows += [(iid, c, v) for c, v in zip(clk, vals)]
+    hist = pd.DataFrame(rows, columns=["itemid", "clock", "value"])
+    tss = pd.DataFrame({"itemid": [1, 2, 3], "mean": [1.0] * 3, "std": [1.0] * 3})
+    cl = cluster_anomalies(hist, tss, [1, 2, 3], ClusteringConfig(min_corr_points=8))
+    assert cl[1] == cl[2] >= 0

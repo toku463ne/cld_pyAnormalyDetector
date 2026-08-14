@@ -42,6 +42,10 @@ from config.schema import ClusteringConfig
 
 logger = logging.getLogger(__name__)
 
+# An item sampled more than this many times coarser than the common grid would be
+# carried as almost pure interpolation; see _usable_items.
+_MAX_GAP_FACTOR = 2.0
+
 
 def cluster_anomalies(
     history_df: pd.DataFrame,
@@ -78,13 +82,32 @@ def cluster_anomalies(
         return {i: -1 for i in item_ids}
 
     # Build time-normalized charts from the history window; correlation is on
-    # first differences (see _correlation_distance_matrix).
-    charts = _build_charts(history_df, item_ids)
+    # first differences (see _correlation_distance_matrix).  Items too coarse for
+    # the common grid are excluded rather than allowed to coarsen it for
+    # everybody — see _infer_unitsecs.
+    unitsecs = _infer_unitsecs(history_df[history_df["itemid"].isin(item_ids)]) \
+        if not history_df.empty else None
+    usable = item_ids
+    if unitsecs:
+        usable = _usable_items(history_df, item_ids, unitsecs)
+    charts = _build_charts(history_df, usable, unitsecs=unitsecs)
     # `present` MUST follow chart key order — the distance matrix (and thus
     # db.labels_) is built from list(charts.keys()); a different order here
     # misattributes labels to the wrong items.
     present = list(charts.keys())
     if len(present) < 2:
+        return {i: -1 for i in item_ids}
+
+    # A correlation over a handful of points is not evidence: with three first
+    # differences two independent series coincide exactly one time in six.  Refuse
+    # to cluster rather than group at random (DETECTION.md §8.10).
+    n_diffs = max(len(next(iter(charts.values()))) - 1, 0)
+    if n_diffs < cfg.min_corr_points:
+        logger.warning(
+            "clustering: only %d differenced point(s) on a %ds grid (need %d); "
+            "leaving all %d item(s) unclustered",
+            n_diffs, unitsecs or 0, cfg.min_corr_points, len(item_ids),
+        )
         return {i: -1 for i in item_ids}
 
     families = None
@@ -124,20 +147,58 @@ def cluster_anomalies(
 # Helpers
 # ------------------------------------------------------------------
 
-def _infer_unitsecs(df: pd.DataFrame, fallback: int = 600) -> int:
-    """Coarsest typical sampling interval across items (max of per-item median
-    clock gap), so every series can be resampled onto one grid without upsampling
-    beyond any item's real resolution."""
-    med = (
+def _item_median_gaps(df: pd.DataFrame) -> pd.Series:
+    """Per-item median spacing between consecutive samples."""
+    return (
         df.sort_values(["itemid", "clock"])
         .groupby("itemid")["clock"]
         .apply(lambda c: c.diff().median())
         .dropna()
     )
+
+
+def _infer_unitsecs(df: pd.DataFrame, fallback: int = 600) -> int:
+    """Typical sampling interval across items — the **median** of the per-item
+    median clock gaps.
+
+    This used to take the max, on the reasoning that no series should be
+    upsampled beyond its own resolution.  In practice one coarse item destroys
+    the resolution of every other: a cycle containing two hourly
+    `trendavg.3Mago.*` items (3 samples each) forced the whole grid to 3600 s,
+    leaving **4 points** for items that had 180 samples at 60 s.  Three first
+    differences make a Spearman correlation meaningless — two *independent*
+    series land on distance exactly 0.0 one time in six — so unrelated items were
+    merged at random (DETECTION.md §8.10).
+
+    Items too coarse to support the resulting grid are dropped instead, by
+    `_usable_items`, rather than being carried as pure interpolation.
+    """
+    med = _item_median_gaps(df)
     if med.empty:
         return fallback
-    u = int(med.max())
+    u = int(med.median())
     return u if u > 0 else fallback
+
+
+def _usable_items(df: pd.DataFrame, item_ids: list[int], unitsecs: int) -> list[int]:
+    """Items whose own sampling can support the grid.
+
+    An item sampled much more coarsely than `unitsecs` contributes almost only
+    interpolated points; its first differences are then piecewise-constant, whose
+    rank order is noise that correlates with anything.  Excluding it leaves it as
+    a singleton, which is the safe outcome — it is still reported, just not
+    grouped on evidence that does not exist.
+    """
+    med = _item_median_gaps(df)
+    limit = unitsecs * _MAX_GAP_FACTOR
+    keep = [i for i in item_ids if float(med.get(i, np.inf)) <= limit]
+    dropped = len(item_ids) - len(keep)
+    if dropped:
+        logger.info(
+            "clustering: %d item(s) too coarse for the %ds grid; left unclustered",
+            dropped, unitsecs,
+        )
+    return keep
 
 
 def _fit_labels(mat: np.ndarray, cfg: ClusteringConfig) -> np.ndarray:

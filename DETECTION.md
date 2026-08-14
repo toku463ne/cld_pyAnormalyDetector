@@ -427,10 +427,25 @@ co-moving items from ever reaching the correlation stage).
 `_build_charts` puts every item on one clock grid, so items collected at
 different periods (60 s vs 600 s) are compared at the same wall-clock times:
 
-1. `unitsecs = max over items of (median clock gap)` — the coarsest real
-   resolution, so nothing is upsampled beyond its true sampling rate;
-2. bucket `clock // unitsecs`, average within bucket;
-3. reindex onto the full grid, `interpolate(limit_direction="both")`.
+1. `unitsecs = median over items of (median clock gap)` — the typical real
+   resolution;
+2. items whose own median gap exceeds `2 x unitsecs` are **dropped** — they would
+   contribute almost only interpolated points, whose first differences are
+   piecewise-constant and rank-correlate with anything. They stay singletons,
+   which is still reported, just not grouped on evidence that does not exist;
+3. bucket `clock // unitsecs`, average within bucket;
+4. reindex onto the full grid, `interpolate(limit_direction="both")`.
+
+Step 1 used to take the **max**, on the reasoning that no series should be
+upsampled past its own rate. In practice one coarse item blinded every other:
+two hourly `trendavg.3Mago.*` items with 3 samples each forced a 3600 s grid,
+leaving **4 points** for items that had 180 samples at 60 s (§8.10).
+
+`min_corr_points` (default 8) is the backstop: below that many first differences
+the whole set is left unclustered rather than grouped on noise. The window is
+nominally `detection_period` (12 h) but the history cache only ever holds
+`history_retention x history_interval` (3 h), so the usable span is the smaller
+of the two.
 
 The window is `endep - clustering.detection_period` … `endep` (default 12 h).
 Trends are **not** prepended — an earlier version prepended 14 d of hourly
@@ -532,12 +547,13 @@ bridge cannot form. Agglomerative clustering labels every point, so clusters
 smaller than `min_samples` are mapped back to `-1` to preserve DBSCAN's meaning
 of noise, which both rescue and the dashboard collapse key off.
 
-`corr_eps` defaults to **0.20** and means something different per linkage: a
-neighbour radius for DBSCAN, a cap on the whole cluster for complete. It has to
-be looser for complete linkage — at 0.10 a genuine same-host docker trio splits
-on one 0.109 pair. (The DBSCAN-era 0.10 was itself a retune: the older 0.2 was
-set when trends were prepended, and on the short window it merged everything that
-co-spiked.)
+`corr_eps` defaults to **0.30** and means something different per linkage: a
+neighbour radius for DBSCAN, a cap on the whole cluster for complete, so it has
+to be looser. It moved again when the grid stopped collapsing (§3.1): on the
+finer grid the distances spread out, and 0.30 dominates 0.20 on the incident
+labels — true pairs 32 → 36 for one extra false pair. (The DBSCAN-era 0.10 was
+itself a retune: the older 0.2 was set when trends were prepended, and on the
+short window it merged everything that co-spiked.)
 
 `_normalise` rescales the matrix only when its span exceeds 1.0, and maps `NaN`
 to distance 1.0.
@@ -661,7 +677,8 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `metric_categories.recurring_peak.k_sigma` | 2.0 | sigma multiple a bucket max must clear to open an episode |
 | `metric_categories.recurring_peak.exclude_recent_secs` | 86400 | tail kept out of the precedent (§1.3) |
 | `clustering.linkage` | `complete` | how the distance matrix becomes clusters (§3.4); `dbscan` restores chaining |
-| `clustering.corr_eps` | 0.20 | correlation-distance threshold; cluster diameter cap under `complete` |
+| `clustering.corr_eps` | 0.30 | correlation-distance threshold; cluster diameter cap under `complete` |
+| `clustering.min_corr_points` | 8 | first differences needed before a correlation counts as evidence (§3.1) |
 | `clustering.raw_corr_min` | 0.99 | gate for the raw-level channel |
 | `clustering.detection_period` | 43200 | seconds of history used for clustering |
 | `clustering.max_onset_gap` | 7200 | max onset difference for two items to share a cluster (0 = off) |
@@ -1033,3 +1050,57 @@ change is correctness: fewer wrong incidents and fewer items rescued into them.
 
 Pinned by the linkage cases in `tests/unit/test_clustering.py`, including one
 that asserts a cross-host incident still groups.
+
+### 8.10 The chart grid collapsed to four points (fixed)
+
+A reviewer rejected a cluster holding `IMTDB123 mssql.cache_hit_ratio` and two
+VMware guest-memory items from an unrelated host, noting that not even the
+"anomaly times must line up" condition looked satisfied.
+
+Two things were wrong with that reading, and one much worse thing underneath it.
+
+**The Jaccard stage no longer exists.** It was removed in `faaa8af` (§3), and
+`jaccard_eps` had been sitting in the config unused ever since — now deleted.
+The condition that does enforce shared timing is the onset constraint (§3.3), and
+here it passed honestly: both items resolved to an onset of 08-14 01:00, a gap of
+zero. Onsets come from hourly trends and are weak for permanently volatile items,
+but they were not the failure.
+
+**The distance itself was noise.** Every pair in that cluster had distance
+exactly `0.000`. `_infer_unitsecs` took the *max* of the per-item median sample
+gaps, and the cycle contained two `trendavg.3Mago.*` items sampled hourly with
+three samples in-window. Those two dragged the shared grid to 3600 s, so ten
+items holding 180 samples at 60 s were reduced to **4 buckets — 3 first
+differences**. At that length a Spearman coefficient is barely a statistic:
+
+| first differences | P(distance exactly 0 for two *independent* series) | distinct distances |
+|---|---|---|
+| **3 (this cycle)** | **16.6 %** | **4** |
+| 6 | 0.2 % | 36 |
+| 18 | 0 % | 682 |
+| 36 | 0 % | 6552 |
+
+One unrelated pair in six was being handed a perfect edge. Nothing downstream —
+onset constraint, complete linkage, `min_samples` — can repair a distance matrix
+built from three points.
+
+**Fixes** (§3.1): the grid takes the **median** of the per-item gaps instead of
+the max; items too coarse to support it are dropped rather than allowed to
+coarsen it for everybody; and `min_corr_points` (8) refuses to cluster at all
+below a usable number of differences. `corr_eps` was re-tuned to 0.30 on the
+resulting distribution.
+
+On the rejected cycle the grid goes 3600 s → 300 s and 4 points → 37, and the
+clustering becomes: `mssql.cache_hit_ratio` alone, the two VMware memory items
+together, the two `IMTDB123` cache counters together, the three `sug-docker011`
+CPU rates together, and the two hourly `trendavg` items unclustered. Every
+cluster is now within one host. The pairs that used to read `0.000` read 0.502
+and 0.516.
+
+Against the incident labels the grid fix pays for the recall that complete
+linkage (§8.9) had cost: pair recall **0.489 → 0.532** at precision 1.000, i.e.
+back to the original DBSCAN's true-pair count with the false merges still gone.
+
+Pinned by `tests/unit/test_clustering_production_sample.py` — which asserts both
+that the unrelated item leaves and that the genuine same-host groups survive —
+and the grid cases in `tests/unit/test_clustering.py`.
