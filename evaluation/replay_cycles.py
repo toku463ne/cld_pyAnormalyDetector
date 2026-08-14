@@ -220,7 +220,10 @@ def main() -> int:
         help="comma-separated recency.max_age_secs values to compare "
              "(default: the configured one)",
     )
-    parser.add_argument("--quiet", action="store_true", help="totals only")
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="quieten the per-cycle detector logs (findings are always printed)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -258,7 +261,7 @@ def main() -> int:
         print(f"  recorded: {len(res['recorded'])}")
         print(f"  missed with an onset inside the replayed span: {len(real)}"
               f"   (+{len(uncovered)} whose onset predates it — not covered by this export)")
-        if real and not args.quiet:
+        if real:
             lags = []
             for i in real:
                 d = res["details"].get(i) or baseline["details"].get(i)
