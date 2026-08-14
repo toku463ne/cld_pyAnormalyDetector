@@ -512,14 +512,32 @@ item on its own.
 Set `max_onset_gap: 0` to disable. The fast axis does not pass onsets (its whole
 signal is short-span co-occurrence), so it is unaffected.
 
-### 3.4 DBSCAN
+### 3.4 Grouping — complete linkage
 
-`DBSCAN(eps=corr_eps, min_samples=min_samples, metric="precomputed")` over the
-distance matrix; label `-1` = noise. Items with no chart are also `-1`.
+`clustering/dbscan.py::_fit_labels`. `clustering.linkage` selects how the
+distance matrix becomes clusters; label `-1` = noise, and items with no chart are
+`-1` too.
 
-`corr_eps` defaults to **0.10**. The older 0.2 was tuned when trends were
-prepended; on the short window the distance distribution shifts and 0.2 merges
-everything that co-spikes into mega-clusters.
+| linkage | rule |
+|---|---|
+| `complete` (default) | agglomerative; **every** pair inside a cluster within `corr_eps` |
+| `average` | agglomerative on the mean inter-cluster distance |
+| `dbscan` | density-reachable (the original) |
+
+DBSCAN groups by *reachability*: A–B close and B–C close puts A and C together
+however far apart they are. One coincident spike is enough to bridge unrelated
+shapes, and the rescue step (§3.5) then promotes the bridged items to anomalies
+— see §8.9. Complete linkage bounds the cluster **diameter** instead, so the
+bridge cannot form. Agglomerative clustering labels every point, so clusters
+smaller than `min_samples` are mapped back to `-1` to preserve DBSCAN's meaning
+of noise, which both rescue and the dashboard collapse key off.
+
+`corr_eps` defaults to **0.20** and means something different per linkage: a
+neighbour radius for DBSCAN, a cap on the whole cluster for complete. It has to
+be looser for complete linkage — at 0.10 a genuine same-host docker trio splits
+on one 0.109 pair. (The DBSCAN-era 0.10 was itself a retune: the older 0.2 was
+set when trends were prepended, and on the short window it merged everything that
+co-spiked.)
 
 `_normalise` rescales the matrix only when its span exceeds 1.0, and maps `NaN`
 to distance 1.0.
@@ -642,7 +660,8 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `metric_categories.recurring_peak.min_episodes` | 9 | baseline excursions that make an item a habitual peaker (§2.6); lower to suppress more |
 | `metric_categories.recurring_peak.k_sigma` | 2.0 | sigma multiple a bucket max must clear to open an episode |
 | `metric_categories.recurring_peak.exclude_recent_secs` | 86400 | tail kept out of the precedent (§1.3) |
-| `clustering.corr_eps` | 0.10 | DBSCAN radius on correlation distance |
+| `clustering.linkage` | `complete` | how the distance matrix becomes clusters (§3.4); `dbscan` restores chaining |
+| `clustering.corr_eps` | 0.20 | correlation-distance threshold; cluster diameter cap under `complete` |
 | `clustering.raw_corr_min` | 0.99 | gate for the raw-level channel |
 | `clustering.detection_period` | 43200 | seconds of history used for clustering |
 | `clustering.max_onset_gap` | 7200 | max onset difference for two items to share a cluster (0 = off) |
@@ -950,3 +969,67 @@ NULL, so it starts working per item at the first `anomdec-update-stats` run.
 Pinned by `tests/unit/test_changepoint_production_sample.py` (which asserts the
 two named items come back when only this gate is disabled),
 `tests/unit/test_baseline.py`, `test_gating.py` and `test_rolling_stats.py`.
+
+### 8.9 A coincident spike bridged unrelated incidents (fixed)
+
+A reviewer looked at a cluster page holding eleven items — three
+`sug-docker015` container CPU rates, five `IPX012` unbound DNS counters, two
+`IPX012` CPU counters and a VMware guest CPU — and objected that the 14-day
+shapes are obviously different, so the clustering must not be looking at trends.
+
+The first half of that is right: clustering reads the 12 h history window only
+(§3.1), and `trends_stats` is an unused parameter. The second half turned out to
+be the wrong lever, twice over.
+
+**Trends similarity does not separate them.** Measured on the 17:09 export, for
+the pair type that must split (docker ↔ unbound) against the pair type that must
+be kept (the weakest genuine member, `unbound.flag[edns.present]`, against the
+unbound core):
+
+| pair | 12 h distance | trends raw | trends diff | daily profile |
+|---|---|---|---|---|
+| docker ↔ unbound (must split) | 0.52–0.78 | 0.15–0.66 | 0.10–0.34 | **0.81–0.95** |
+| unbound edns ↔ unbound core (must keep) | 0.06 | 0.30 | 0.15–0.19 | **0.84–0.86** |
+
+The daily profile of container CPU and DNS query rate is *more* alike than the
+genuine within-incident pair — both are business-day shaped. Any threshold that
+splits the first would split the second. Euclidean distance does not rescue this:
+raw Euclidean is meaningless across units (ms vs qps, and rescaling the unit
+would change the clustering), while z-normalised Euclidean is monotone in Pearson
+correlation (`d² = 2n(1−r)`) and so adds nothing. Of seven unit-free shape
+metrics tried, only the duty cycle — the fraction of the window above the
+series' own midrange — separated the export's pairs (docker 0.19 vs unbound
+0.009), and it failed validation: against the incident labels in
+`datasets/queues/` it breaks 15 of 121 genuine same-incident pairs at the
+threshold the docker case needs, the worst damage being `unbound.histogram` vs
+`unbound.type[TXT]` on one host at 0.887.
+
+**The distance was never the problem.** 0.52–0.78 against 0.00–0.11 is already a
+clean separation. What merged them was DBSCAN's density-reachability: a chain of
+close neighbours joins endpoints at any distance, and the bridging items were the
+IPX012 CPU counters that co-spiked with both sides. Chaining is visible even
+inside the 17:09 export, where two docker items 0.109 apart — beyond the 0.10 eps
+— share a cluster through the third.
+
+The harm is not cosmetic. All three docker items were persisted with
+`rescued = TRUE` at effective scores 0.398/0.557/0.591, i.e. **below the 0.7
+threshold**: they were magnitude-suppressed candidates that the false merge
+promoted into a confirmed incident (§3.5). A bad edge manufactures detections.
+
+**Fix:** complete linkage (§3.4), which caps the cluster diameter. On the
+incident-labelled queues, false merges **9 → 4** and pair precision **0.79 →
+0.89**, at a cost of 2 of 34 true pairs. On the 17:09 export the docker trio and
+the unbound five separate cleanly and nothing is rescued.
+
+**Calibration note on what clustering is for.** The dashboard collapses to one
+row per `(group_name, hostid, clusterid)` (`tools/_dashboard.py`), so clustering
+only ever removes *within-host* redundancy. Across the labelled queues plus the
+17:09 export that is 45 items → 32 rows, of which **24 rows are singletons no
+clustering can touch**; collapsing across hosts as well would save exactly one
+more row, and every linkage/threshold variant tried lands between 30 and 33.
+Clustering is therefore close to its ceiling as a way to shorten the dashboard —
+the lever for that is detection volume (§8.7, §8.8) — and the value of this
+change is correctness: fewer wrong incidents and fewer items rescued into them.
+
+Pinned by the linkage cases in `tests/unit/test_clustering.py`, including one
+that asserts a cross-host incident still groups.

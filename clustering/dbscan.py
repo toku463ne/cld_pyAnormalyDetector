@@ -1,12 +1,18 @@
 """
-Correlation-based DBSCAN clustering for anomalous items.
+Correlation-based clustering for anomalous items.
 
 Items whose time-series *shapes co-move* belong to the same incident.  Each item
 is resampled onto a common clock grid (so different collection periods align),
 its first differences are rank-correlated (Spearman) against the others (so a
 shared slow drift doesn't make unrelated items look alike, and a few large
-coincident spikes can't dominate the score), and DBSCAN groups items whose
-correlation distance is within corr_eps.
+coincident spikes can't dominate the score), and items whose correlation distance
+is within corr_eps are grouped.
+
+Grouping is complete-linkage by default, which caps a cluster's diameter: every
+pair inside it is within corr_eps.  This module used DBSCAN (hence the file name),
+but density-reachability chains — A-B close and B-C close merges A with C however
+far apart they are — and a coincident spike is all it takes to bridge unrelated
+shapes.  See DETECTION.md §8.9.
 
 Correlation is computed on the history/anomaly window only, at its real
 resolution.  An earlier version prepended trends_retention days of hourly trends
@@ -30,7 +36,7 @@ import logging
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, AgglomerativeClustering
 
 from config.schema import ClusteringConfig
 
@@ -98,12 +104,10 @@ def cluster_anomalies(
                 n_cut, cfg.max_onset_gap,
             )
 
-    db = DBSCAN(
-        eps=cfg.corr_eps, min_samples=cfg.min_samples, metric="precomputed"
-    ).fit(corr_mat)
+    labels = _fit_labels(corr_mat, cfg)
 
     clusters: dict[int, int] = {
-        item_id: int(label) for item_id, label in zip(present, db.labels_)
+        item_id: int(label) for item_id, label in zip(present, labels)
     }
     for i in item_ids:
         clusters.setdefault(i, -1)
@@ -134,6 +138,39 @@ def _infer_unitsecs(df: pd.DataFrame, fallback: int = 600) -> int:
         return fallback
     u = int(med.max())
     return u if u > 0 else fallback
+
+
+def _fit_labels(mat: np.ndarray, cfg: ClusteringConfig) -> np.ndarray:
+    """Group the distance matrix into clusters; -1 means noise.
+
+    `complete` (the default) caps the **diameter** of a cluster: every pair in it
+    is within `corr_eps`.  DBSCAN instead clusters by density-reachability, so a
+    chain of close neighbours merges endpoints that are arbitrarily far apart —
+    which is how a coincident spike bridged unrelated shapes into one incident
+    (see DETECTION.md §8.9).  Nothing about the distance itself was wrong there:
+    the offending pairs sat at 0.52-0.78 while the genuine ones were at 0.00-0.11.
+
+    Agglomerative clustering labels every point, so clusters smaller than
+    `min_samples` are mapped back to -1 to keep DBSCAN's meaning of noise — the
+    rescue step and the dashboard's collapse both key off it.
+    """
+    if cfg.linkage == "dbscan":
+        return DBSCAN(
+            eps=cfg.corr_eps, min_samples=cfg.min_samples, metric="precomputed"
+        ).fit(mat).labels_
+
+    labels = AgglomerativeClustering(
+        n_clusters=None,
+        distance_threshold=cfg.corr_eps,
+        metric="precomputed",
+        linkage=cfg.linkage,
+    ).fit(mat).labels_
+
+    values, counts = np.unique(labels, return_counts=True)
+    too_small = {v for v, c in zip(values, counts) if c < cfg.min_samples}
+    if not too_small:
+        return labels
+    return np.array([-1 if v in too_small else v for v in labels])
 
 
 def _build_charts(

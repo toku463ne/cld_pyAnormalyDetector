@@ -74,12 +74,31 @@ class AnomalyFilterRule(BaseModel):
 
 class ClusteringConfig(BaseModel):
     jaccard_eps: float = 0.1
-    # Correlation-distance eps for DBSCAN. Tuned for correlating first-differences
-    # on the history/anomaly window only (see clustering/dbscan.py). The old 0.2
-    # was set when 14d of hourly trends were prepended; on the short window that
-    # distribution shifts and 0.2 merges everything that co-spikes into mega-
-    # clusters, so 0.10 is the knee that keeps clusters coherent by host/metric.
-    corr_eps: float = 0.10
+    # How members are grouped once the distance matrix exists.
+    #
+    #   complete : agglomerative, every pair inside a cluster within corr_eps
+    #   average  : agglomerative on the mean inter-cluster distance
+    #   dbscan   : density-reachable (the original)
+    #
+    # DBSCAN clusters by *reachability*, so A-B close and B-C close puts A and C
+    # together however far apart they are.  That chaining is what let a coincident
+    # spike bridge unrelated shapes: a real cycle merged three docker CPU items
+    # into a DNS incident 0.52-0.78 away, through intermediate items, and the
+    # rescue step then promoted the docker items to anomalies.  Complete linkage
+    # bounds the cluster diameter instead, so the bridge cannot form.
+    # Measured on the incident-labelled queues: false merges 9 -> 4 and pair
+    # precision 0.79 -> 0.89, for 2 of 34 true pairs.
+    linkage: Literal["complete", "average", "dbscan"] = "complete"
+    # Correlation-distance threshold, correlating first-differences on the
+    # history/anomaly window only (see clustering/dbscan.py).
+    #
+    # It means different things per linkage, which is why the default moved with
+    # it: for DBSCAN it is a neighbour radius, and 0.10 was the knee (the older
+    # 0.2 was set when 14d of hourly trends were prepended, and on the short
+    # window it merged everything that co-spiked).  For complete linkage it is a
+    # cap on the *whole cluster*, so it has to be looser to hold a genuine group
+    # together -- at 0.10 a real same-host docker trio splits on one 0.109 pair.
+    corr_eps: float = 0.20
     # Raw-correlation channel: two items sharing a metric family that correlate
     # in raw levels above this threshold are merged even if their first-difference
     # correlation is weak. This recovers monotonic-ramp groups (cumulative

@@ -91,7 +91,24 @@ ensemble:
 ##################################################
 clustering:
   jaccard_eps: 0.1
-  corr_eps: 0.10   # correlate first-diffs on the history window only; 0.2 merged everything that co-spiked
+  # How members are grouped once the distances exist.
+  #   complete : agglomerative; EVERY pair in a cluster within corr_eps
+  #   average  : agglomerative on the mean inter-cluster distance
+  #   dbscan   : density-reachable (the original)
+  # DBSCAN clusters by reachability, so A-B close and B-C close puts A with C
+  # however far apart they are.  One coincident spike is enough to bridge
+  # unrelated shapes: a real cycle pulled three docker CPU items into a DNS
+  # incident 0.52-0.78 away through intermediate items, and the rescue step then
+  # promoted them to anomalies.  Complete linkage bounds the cluster diameter, so
+  # the bridge cannot form.  Measured on the incident-labelled queues: false
+  # merges 9 -> 4, pair precision 0.79 -> 0.89, for 2 of 34 true pairs.
+  linkage: complete
+  # Correlation distance threshold on first-differences over the history window.
+  # Means different things per linkage, which is why the default moved with it:
+  # a neighbour radius for dbscan (0.10 was the knee), a cap on the whole cluster
+  # for complete -- at 0.10 a genuine same-host docker trio splits on one 0.109
+  # pair, so it has to be looser.
+  corr_eps: 0.20
   raw_corr_min: 0.99   # raw-level channel: recover same-family monotonic ramps the diff channel fragments
   min_samples: 2
   sigma: 2.0                 # trends sample is "outside baseline" beyond mean ± sigma*std

@@ -3,7 +3,12 @@ import numpy as np
 import pandas as pd
 
 from config.schema import ClusteringConfig
-from clustering.dbscan import _build_charts, _correlation_distance_matrix, cluster_anomalies
+from clustering.dbscan import (
+    _build_charts,
+    _correlation_distance_matrix,
+    _fit_labels,
+    cluster_anomalies,
+)
 
 
 def test_cluster_labels_independent_of_item_id_order():
@@ -55,3 +60,70 @@ def test_comoving_changes_cluster():
     shape = np.cumsum(np.sin(np.arange(n) / 3.0))
     m = _correlation_distance_matrix({1: pd.Series(shape), 2: pd.Series(shape * 2.0 + 100.0)})
     assert m[0, 1] < 0.05
+
+
+# ----------------------------------------------------------------------
+# Linkage: chaining vs a bounded cluster diameter (DETECTION.md §8.9)
+# ----------------------------------------------------------------------
+
+def _chain_matrix():
+    """A - B - C where each link is short but the endpoints are far apart."""
+    return np.array([
+        [0.00, 0.08, 0.60],
+        [0.08, 0.00, 0.08],
+        [0.60, 0.08, 0.00],
+    ])
+
+
+def test_dbscan_chains_distant_endpoints_together():
+    """The behaviour this change exists to remove: a bridge in the middle puts
+    two items 0.60 apart into one incident."""
+    labels = _fit_labels(_chain_matrix(), ClusteringConfig(linkage="dbscan", corr_eps=0.10))
+    assert labels[0] == labels[2] >= 0
+
+
+def test_complete_linkage_refuses_the_bridge():
+    labels = _fit_labels(_chain_matrix(), ClusteringConfig(linkage="complete", corr_eps=0.20))
+    assert labels[0] != labels[2]
+
+
+def test_complete_linkage_still_groups_a_genuinely_tight_set():
+    mat = np.array([
+        [0.00, 0.01, 0.09, 0.70],
+        [0.01, 0.00, 0.11, 0.70],
+        [0.09, 0.11, 0.00, 0.70],
+        [0.70, 0.70, 0.70, 0.00],
+    ])
+    labels = _fit_labels(mat, ClusteringConfig(linkage="complete", corr_eps=0.20))
+    assert labels[0] == labels[1] == labels[2] >= 0
+    assert labels[3] != labels[0]
+
+
+def test_complete_linkage_marks_undersized_clusters_as_noise():
+    """Agglomerative labels every point, so DBSCAN's meaning of -1 has to be
+    restored: rescue and the dashboard collapse both key off it."""
+    mat = np.array([
+        [0.00, 0.05, 0.90],
+        [0.05, 0.00, 0.90],
+        [0.90, 0.90, 0.00],
+    ])
+    labels = _fit_labels(mat, ClusteringConfig(linkage="complete", corr_eps=0.20, min_samples=2))
+    assert labels[0] == labels[1] >= 0
+    assert labels[2] == -1
+
+
+def test_cross_host_incident_still_groups():
+    """Same incident on two hosts must survive: co-moving shapes cluster even
+    though the items are on different hosts."""
+    clk = list(range(0, 7200, 300))
+    shape = [1.0, 1.2, 0.9, 1.1, 1.0, 3.0, 8.0, 9.0, 7.0, 4.0, 2.0, 1.5,
+             1.0, 1.1, 0.9, 1.0, 1.2, 1.0, 0.9, 1.1, 1.0, 1.0, 1.1, 0.9]
+    flat = [5.0] * len(clk)
+    rows = []
+    for iid, vals in [(11, shape), (22, [v * 3 for v in shape]), (33, flat)]:
+        rows += [(iid, int(c), float(v)) for c, v in zip(clk, vals)]
+    hist = pd.DataFrame(rows, columns=["itemid", "clock", "value"])
+    tss = pd.DataFrame({"itemid": [11, 22, 33], "mean": [1.0, 3.0, 5.0], "std": [1.0, 1.0, 1.0]})
+    cl = cluster_anomalies(hist, tss, [11, 22, 33], ClusteringConfig())
+    assert cl[11] == cl[22] >= 0
+    assert cl[33] != cl[11]
