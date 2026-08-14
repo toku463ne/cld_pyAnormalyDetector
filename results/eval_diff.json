@@ -1,0 +1,2078 @@
+{
+  "datasets": [
+    {
+      "dataset": "dashboard_2026060808",
+      "n_items": 13,
+      "n_labeled": 12,
+      "n_anomalies_true": 3,
+      "n_detected": 2,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 2,
+        "n_false_negative": 3,
+        "n_true_negative": 7,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.3,
+            "recall": 1.0,
+            "f1": 0.4615384615384615,
+            "tp": 3,
+            "fp": 7,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.5,
+            "recall": 0.6666666666666666,
+            "f1": 0.5714285714285715,
+            "tp": 2,
+            "fp": 2,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.3333333333333333,
+            "f1": 0.5,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 2,
+        "per_category": {
+          "session_traffic": {
+            "alerts": 2,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "disk": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.5,
+        "recall": 0.6666666666666666,
+        "f1": 0.5714285714285715,
+        "n_true_positive": 2,
+        "n_false_positive": 2,
+        "n_false_negative": 1,
+        "n_true_negative": 7,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.3,
+            "recall": 1.0,
+            "f1": 0.4615384615384615,
+            "tp": 3,
+            "fp": 7,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.5,
+            "recall": 0.6666666666666666,
+            "f1": 0.5714285714285715,
+            "tp": 2,
+            "fp": 2,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.3333333333333333,
+            "f1": 0.5,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2
+          }
+        },
+        "weighted_recall": 0.6666666666666666,
+        "weighted_f1": 0.5714285714285715,
+        "n_alerts": 4,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.05,
+        "target_recall": 0.95,
+        "precision": 0.5,
+        "recall": 0.6666666666666666,
+        "f1": 0.5714285714285715,
+        "n_true_positive": 2,
+        "n_false_positive": 2,
+        "n_false_negative": 1,
+        "n_true_negative": 7,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.3,
+            "recall": 1.0,
+            "f1": 0.4615384615384615,
+            "tp": 3,
+            "fp": 7,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.5,
+            "recall": 0.6666666666666666,
+            "f1": 0.5714285714285715,
+            "tp": 2,
+            "fp": 2,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.3333333333333333,
+            "f1": 0.5,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2
+          }
+        },
+        "weighted_recall": 0.6,
+        "weighted_f1": 0.5454545454545454,
+        "n_alerts": 4,
+        "per_category": {
+          "session_traffic": {
+            "alerts": 2,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "disk": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu_load": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 2,
+        "n_pred_clusters": 0,
+        "n_incident_items": 2,
+        "n_items_evaluated": 0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026061012",
+      "n_items": 5,
+      "n_labeled": 5,
+      "n_anomalies_true": 1,
+      "n_detected": 2,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "n_true_positive": 1,
+        "n_false_positive": 1,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.2,
+            "recall": 1.0,
+            "f1": 0.33333333333333337,
+            "tp": 1,
+            "fp": 4,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.25,
+            "recall": 1.0,
+            "f1": 0.4,
+            "tp": 1,
+            "fp": 3,
+            "fn": 0
+          },
+          "zscore": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 1,
+            "fn": 1
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 0.6666666666666666,
+        "n_alerts": 2,
+        "per_category": {
+          "session_traffic": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "default": {
+            "alerts": 1,
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "n_true_positive": 1,
+        "n_false_positive": 1,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.2,
+            "recall": 1.0,
+            "f1": 0.33333333333333337,
+            "tp": 1,
+            "fp": 4,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.25,
+            "recall": 1.0,
+            "f1": 0.4,
+            "tp": 1,
+            "fp": 3,
+            "fn": 0
+          },
+          "zscore": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 1,
+            "fn": 1
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 0.6666666666666666,
+        "n_alerts": 2,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.55,
+        "target_recall": 0.95,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "n_true_positive": 1,
+        "n_false_positive": 1,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.55,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.2,
+            "recall": 1.0,
+            "f1": 0.33333333333333337,
+            "tp": 1,
+            "fp": 4,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.25,
+            "recall": 1.0,
+            "f1": 0.4,
+            "tp": 1,
+            "fp": 3,
+            "fn": 0
+          },
+          "zscore": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 1,
+            "fn": 1
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 0.6666666666666666,
+        "n_alerts": 2,
+        "per_category": {
+          "session_traffic": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "default": {
+            "alerts": 1,
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 1,
+        "n_pred_clusters": 0,
+        "n_incident_items": 1,
+        "n_items_evaluated": 1,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026061208",
+      "n_items": 8,
+      "n_labeled": 8,
+      "n_anomalies_true": 3,
+      "n_detected": 2,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 0.6666666666666666,
+        "f1": 0.8,
+        "n_true_positive": 2,
+        "n_false_positive": 0,
+        "n_false_negative": 1,
+        "n_true_negative": 5,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.6,
+            "recall": 1.0,
+            "f1": 0.7499999999999999,
+            "tp": 3,
+            "fp": 2,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 1.0,
+            "recall": 0.3333333333333333,
+            "f1": 0.5,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 3,
+            "fp": 0,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.8,
+        "weighted_f1": 0.888888888888889,
+        "n_alerts": 2,
+        "per_category": {
+          "disk": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_pct": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu_load": {
+            "alerts": 2,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "n_true_positive": 3,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 5,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.6,
+            "recall": 1.0,
+            "f1": 0.7499999999999999,
+            "tp": 3,
+            "fp": 2,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 1.0,
+            "recall": 0.3333333333333333,
+            "f1": 0.5,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 3,
+            "fp": 0,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 1.0,
+        "n_alerts": 3,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.45,
+        "target_recall": 0.95,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "n_true_positive": 3,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 5,
+        "threshold_used": 0.45,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.6,
+            "recall": 1.0,
+            "f1": 0.7499999999999999,
+            "tp": 3,
+            "fp": 2,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 1.0,
+            "recall": 0.3333333333333333,
+            "f1": 0.5,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 3,
+            "fp": 0,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 1.0,
+        "n_alerts": 3,
+        "per_category": {
+          "disk": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_pct": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu_load": {
+            "alerts": 2,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 1,
+        "n_pred_clusters": 0,
+        "n_incident_items": 2,
+        "n_items_evaluated": 1,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026061608",
+      "n_items": 6,
+      "n_labeled": 6,
+      "n_anomalies_true": 0,
+      "n_detected": 1,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 1,
+        "n_false_negative": 0,
+        "n_true_negative": 5,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 4,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 4,
+            "fn": 0
+          },
+          "zscore": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 1,
+        "per_category": {
+          "default": {
+            "alerts": 1,
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "disk": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 3,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 4,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 4,
+            "fn": 0
+          },
+          "zscore": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 3,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.9,
+        "target_recall": 0.95,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.9,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 4,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "zscore": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "disk": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 0,
+        "n_pred_clusters": 0,
+        "n_incident_items": 0,
+        "n_items_evaluated": 0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026061708",
+      "n_items": 6,
+      "n_labeled": 5,
+      "n_anomalies_true": 0,
+      "n_detected": 0,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 5,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "container_cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 1,
+        "n_false_negative": 0,
+        "n_true_negative": 4,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 1,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.25,
+        "target_recall": 0.95,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 5,
+        "threshold_used": 0.25,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "container_cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 0,
+        "n_pred_clusters": 0,
+        "n_incident_items": 0,
+        "n_items_evaluated": 0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026061808",
+      "n_items": 7,
+      "n_labeled": 6,
+      "n_anomalies_true": 0,
+      "n_detected": 0,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 1,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "container_cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 1,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.05,
+        "target_recall": 0.95,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 3,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 1,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "container_cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 0,
+        "n_pred_clusters": 0,
+        "n_incident_items": 0,
+        "n_items_evaluated": 0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026061908",
+      "n_items": 7,
+      "n_labeled": 6,
+      "n_anomalies_true": 0,
+      "n_detected": 0,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "container_cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.05,
+        "target_recall": 0.95,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 6,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "cpu_load": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "container_cpu": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 0,
+        "n_pred_clusters": 0,
+        "n_incident_items": 0,
+        "n_items_evaluated": 0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026062307",
+      "n_items": 3,
+      "n_labeled": 3,
+      "n_anomalies_true": 0,
+      "n_detected": 0,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.05,
+        "target_recall": 0.95,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "n_true_positive": 0,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 3,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "fp": 2,
+            "fn": 0
+          }
+        },
+        "weighted_recall": 0.0,
+        "weighted_f1": 0.0,
+        "n_alerts": 0,
+        "per_category": {
+          "default": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 0,
+        "n_pred_clusters": 0,
+        "n_incident_items": 0,
+        "n_items_evaluated": 0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    },
+    {
+      "dataset": "dashboard_2026062409",
+      "n_items": 13,
+      "n_labeled": 13,
+      "n_anomalies_true": 11,
+      "n_detected": 11,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "n_true_positive": 11,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 2,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.9166666666666666,
+            "recall": 1.0,
+            "f1": 0.9565217391304348,
+            "tp": 11,
+            "fp": 1,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.9090909090909091,
+            "recall": 0.9090909090909091,
+            "f1": 0.9090909090909091,
+            "tp": 10,
+            "fp": 1,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.8181818181818182,
+            "f1": 0.9,
+            "tp": 9,
+            "fp": 0,
+            "fn": 2
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 1.0,
+        "n_alerts": 11,
+        "per_category": {
+          "session_traffic": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "disk": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "memory_bytes": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "default": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "packets": {
+            "alerts": 3,
+            "tp": 3,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "container_cpu": {
+            "alerts": 4,
+            "tp": 4,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.05,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "n_true_positive": 11,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 2,
+        "threshold_used": 0.05,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.9166666666666666,
+            "recall": 1.0,
+            "f1": 0.9565217391304348,
+            "tp": 11,
+            "fp": 1,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.9090909090909091,
+            "recall": 0.9090909090909091,
+            "f1": 0.9090909090909091,
+            "tp": 10,
+            "fp": 1,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.8181818181818182,
+            "f1": 0.9,
+            "tp": 9,
+            "fp": 0,
+            "fn": 2
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 1.0,
+        "n_alerts": 11,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.5,
+        "target_recall": 0.95,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "n_true_positive": 11,
+        "n_false_positive": 0,
+        "n_false_negative": 0,
+        "n_true_negative": 2,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.9166666666666666,
+            "recall": 1.0,
+            "f1": 0.9565217391304348,
+            "tp": 11,
+            "fp": 1,
+            "fn": 0
+          },
+          "seasonal": {
+            "precision": 0.9090909090909091,
+            "recall": 0.9090909090909091,
+            "f1": 0.9090909090909091,
+            "tp": 10,
+            "fp": 1,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.8181818181818182,
+            "f1": 0.9,
+            "tp": 9,
+            "fp": 0,
+            "fn": 2
+          }
+        },
+        "weighted_recall": 1.0,
+        "weighted_f1": 1.0,
+        "n_alerts": 11,
+        "per_category": {
+          "session_traffic": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "disk": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "memory_bytes": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "default": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "packets": {
+            "alerts": 3,
+            "tp": 3,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "container_cpu": {
+            "alerts": 4,
+            "tp": 4,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 1.0,
+        "completeness": 0.3109175070825711,
+        "v_measure": 0.4743509876140318,
+        "n_true_clusters": 2,
+        "n_pred_clusters": 0,
+        "n_incident_items": 5,
+        "n_items_evaluated": 5,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 6
+      }
+    },
+    {
+      "dataset": "dashboard_2026062609",
+      "n_items": 12,
+      "n_labeled": 12,
+      "n_anomalies_true": 4,
+      "n_detected": 2,
+      "default_threshold": {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
+        "n_true_positive": 2,
+        "n_false_positive": 0,
+        "n_false_negative": 2,
+        "n_true_negative": 8,
+        "threshold_used": 0.5,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.3333333333333333,
+            "recall": 0.75,
+            "f1": 0.46153846153846156,
+            "tp": 3,
+            "fp": 6,
+            "fn": 1
+          },
+          "seasonal": {
+            "precision": 0.42857142857142855,
+            "recall": 0.75,
+            "f1": 0.5454545454545454,
+            "tp": 3,
+            "fp": 4,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.75,
+            "f1": 0.8571428571428571,
+            "tp": 3,
+            "fp": 0,
+            "fn": 1
+          }
+        },
+        "weighted_recall": 0.6666666666666666,
+        "weighted_f1": 0.8,
+        "n_alerts": 2,
+        "per_category": {
+          "default": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "disk": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 2,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "best_threshold": {
+        "threshold": 0.15,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571428571428571,
+        "n_true_positive": 3,
+        "n_false_positive": 0,
+        "n_false_negative": 1,
+        "n_true_negative": 8,
+        "threshold_used": 0.15,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.3333333333333333,
+            "recall": 0.75,
+            "f1": 0.46153846153846156,
+            "tp": 3,
+            "fp": 6,
+            "fn": 1
+          },
+          "seasonal": {
+            "precision": 0.42857142857142855,
+            "recall": 0.75,
+            "f1": 0.5454545454545454,
+            "tp": 3,
+            "fp": 4,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.75,
+            "f1": 0.8571428571428571,
+            "tp": 3,
+            "fp": 0,
+            "fn": 1
+          }
+        },
+        "weighted_recall": 0.75,
+        "weighted_f1": 0.8571428571428571,
+        "n_alerts": 3,
+        "per_category": {}
+      },
+      "min_alerts_threshold": {
+        "threshold": 0.15,
+        "target_recall": 0.95,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571428571428571,
+        "n_true_positive": 3,
+        "n_false_positive": 0,
+        "n_false_negative": 1,
+        "n_true_negative": 8,
+        "threshold_used": 0.15,
+        "per_detector": {
+          "changepoint": {
+            "precision": 0.3333333333333333,
+            "recall": 0.75,
+            "f1": 0.46153846153846156,
+            "tp": 3,
+            "fp": 6,
+            "fn": 1
+          },
+          "seasonal": {
+            "precision": 0.42857142857142855,
+            "recall": 0.75,
+            "f1": 0.5454545454545454,
+            "tp": 3,
+            "fp": 4,
+            "fn": 1
+          },
+          "zscore": {
+            "precision": 1.0,
+            "recall": 0.75,
+            "f1": 0.8571428571428571,
+            "tp": 3,
+            "fp": 0,
+            "fn": 1
+          }
+        },
+        "weighted_recall": 0.8333333333333334,
+        "weighted_f1": 0.9090909090909091,
+        "n_alerts": 3,
+        "per_category": {
+          "default": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          },
+          "disk": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 1,
+            "recall": 0.5,
+            "weighted_recall": 0.5
+          },
+          "memory_bytes": {
+            "alerts": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "recall": 0.0,
+            "weighted_recall": 0.0
+          },
+          "cpu": {
+            "alerts": 1,
+            "tp": 1,
+            "fp": 0,
+            "fn": 0,
+            "recall": 1.0,
+            "weighted_recall": 1.0
+          }
+        }
+      },
+      "clustering": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "homogeneity": 0.0,
+        "completeness": 0.0,
+        "v_measure": 0.0,
+        "n_true_clusters": 3,
+        "n_pred_clusters": 0,
+        "n_incident_items": 3,
+        "n_items_evaluated": 1,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 0
+      }
+    }
+  ],
+  "aggregate": {
+    "n_datasets": 10,
+    "detection": {
+      "default_micro": {
+        "precision": 0.8,
+        "recall": 0.7272727272727273,
+        "f1": 0.761904761904762,
+        "tp": 16,
+        "fp": 4,
+        "fn": 6
+      },
+      "default_macro": {
+        "precision": 0.35,
+        "recall": 0.31666666666666665,
+        "f1": 0.31333333333333335
+      },
+      "best_micro": {
+        "precision": 0.7407407407407407,
+        "recall": 0.9090909090909091,
+        "f1": 0.8163265306122449,
+        "tp": 20,
+        "fp": 7,
+        "fn": 2
+      },
+      "best_macro": {
+        "precision": 0.4,
+        "recall": 0.4416666666666666,
+        "f1": 0.4095238095238095
+      }
+    },
+    "clustering": {
+      "pair_micro": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "n_pair_tp": 0,
+        "n_pair_fp": 0,
+        "n_pair_fn": 6
+      },
+      "pair_macro": {
+        "pair_precision": 0.0,
+        "pair_recall": 0.0,
+        "pair_f1": 0.0,
+        "adjusted_rand": 0.0,
+        "v_measure": 0.047435098761403185
+      }
+    }
+  }
+}
