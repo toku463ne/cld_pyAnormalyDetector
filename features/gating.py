@@ -19,6 +19,7 @@ import logging
 
 import pandas as pd
 
+from features.baseline import baseline_sigma, sample_interval
 from config.schema import (
     DurationConfig,
     IdleBaselineConfig,
@@ -107,11 +108,17 @@ def idle_scale(
 def duration_scale(
     series: pd.Series | None,
     trend_mean: float,
-    trend_std: float,
+    baseline_std: float,
     dcfg: DurationConfig,
-    history_interval: int,
+    sample_secs: int,
 ) -> float:
     """Scale by how long the item stayed outside the baseline band in-window.
+
+    `baseline_std` must be the raw-sample sigma (`baseline_sigma`), not
+    `trends_stats.std` — the band is tested against individual history samples.
+    `sample_secs` must be this item's real collection interval
+    (`sample_interval`), since the anomalous time is a count of samples times
+    their spacing.
 
     Fail-open (returns 1.0) when disabled, when the baseline std is unusable, or
     when no raw history is available — never suppress a real anomaly for lack of
@@ -119,10 +126,10 @@ def duration_scale(
     """
     if not dcfg.enabled:
         return 1.0
-    if series is None or len(series) == 0 or trend_std <= 0:
+    if series is None or len(series) == 0 or baseline_std <= 0:
         return 1.0
 
-    mask = (series - trend_mean).abs() > dcfg.sigma * trend_std
+    mask = (series - trend_mean).abs() > dcfg.sigma * baseline_std
     if dcfg.measure == "consecutive":
         best = run = 0
         for flag in mask:
@@ -132,7 +139,7 @@ def duration_scale(
     else:  # count
         n_anomalous = int(mask.sum())
 
-    anomalous_secs = n_anomalous * history_interval
+    anomalous_secs = n_anomalous * sample_secs
     return max(ramp(anomalous_secs, dcfg.lo_secs, dcfg.hi_secs), dcfg.floor)
 
 
@@ -159,15 +166,18 @@ def apply_gates(
     h_mean = _series(history_stats, "mean")
     t_mean = _series(trends_stats, "mean")
     t_std = _series(trends_stats, "std")
+    t_intra_std = _series(trends_stats, "intra_std")
     t_zero_cnt = _series(trends_stats, "zero_cnt")
     t_cnt = _series(trends_stats, "cnt")
     t_max = _series(trends_stats, "max_value")
 
     dur_enabled = cfg.duration.enabled and history_df is not None and not history_df.empty
     hist_by_item: dict[int, pd.Series] = {}
+    interval_by_item: dict[int, int] = {}
     if dur_enabled:
         for iid, grp in history_df.sort_values("clock").groupby("itemid"):
             hist_by_item[int(iid)] = grp["value"].reset_index(drop=True)
+            interval_by_item[int(iid)] = sample_interval(grp["clock"], history_interval)
 
     result: list[AnomalyScore] = []
     for s in scores:
@@ -188,12 +198,13 @@ def apply_gates(
             delta = abs(float(recent) - float(tmean))
             mag = magnitude_scale(delta, float(tmean), tstd, magnitude_cfg)
 
+        sigma = baseline_sigma(tstd, t_intra_std.get(s.item_id))
         dur = duration_scale(
             hist_by_item.get(s.item_id) if dur_enabled else None,
             float(tmean) if tmean is not None else 0.0,
-            tstd,
+            sigma,
             cfg.duration,
-            history_interval,
+            interval_by_item.get(s.item_id, history_interval),
         )
 
         idle = idle_scale(
@@ -219,6 +230,8 @@ def apply_gates(
                     "dur_scale": dur,
                     "idle_scale": idle,
                     "delta": delta,
+                    "baseline_sigma": sigma,
+                    "sample_secs": interval_by_item.get(s.item_id, history_interval),
                 },
             )
         )

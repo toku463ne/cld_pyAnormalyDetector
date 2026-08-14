@@ -17,13 +17,14 @@ class _RollingStatsStore(BaseStore):
             std        FLOAT,
             last_clock INTEGER,
             zero_cnt   INTEGER,
-            max_value  FLOAT
+            max_value  FLOAT,
+            intra_std  FLOAT
         )
     """
 
     _COLS = [
         "itemid", "sum", "sqr_sum", "cnt", "mean", "std",
-        "last_clock", "zero_cnt", "max_value",
+        "last_clock", "zero_cnt", "max_value", "intra_std",
     ]
 
     # Columns added after the table first shipped; migrated in place.
@@ -31,6 +32,7 @@ class _RollingStatsStore(BaseStore):
         ("last_clock", "INTEGER"),
         ("zero_cnt", "INTEGER"),
         ("max_value", "FLOAT"),
+        ("intra_std", "FLOAT"),
     )
 
     def _ensure_table(self) -> None:

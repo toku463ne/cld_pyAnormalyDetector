@@ -41,6 +41,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.ensemble import EnsembleDetector
 from clustering.dbscan import cluster_anomalies
 from features.gating import apply_gates, category_weight, classify
+from features.baseline import intra_std_from_range
 from evaluation.metrics import (
     compute_clustering_metrics,
     compute_metrics,
@@ -110,6 +111,16 @@ def run_offline_eval(
         .reset_index()
     )
     trends_stats.columns = ["itemid", "mean", "std", "cnt"]
+    # Mirror the daily batch: without intra_std the changepoint detector and the
+    # duration gate fall back to the hourly-average std and the backtest stops
+    # matching what runtime decides.
+    trends_stats["intra_std"] = trends_stats["itemid"].map(
+        intra_std_from_range(
+            trends_df,
+            ("value_min", "value_max"),
+            ds_config.trends_range_to_sigma,
+        )
+    )
 
     hist_startep = endep - ds_config.history_retention * ds_config.history_interval
     history_df = src.get_history(hist_startep, endep, item_ids)
@@ -149,7 +160,9 @@ def run_offline_eval(
     if ds_config.detectors.changepoint.enabled:
         cp_det = ChangepointDetector(ds_config.detectors.changepoint)
         scores_per_detector["changepoint"] = cp_det.detect(
-            history_df=history_df, trends_stats=trends_stats
+            history_df=history_df,
+            trends_stats=trends_stats,
+            reference_interval=ds_config.history_interval,
         )
 
     ensemble = EnsembleDetector(ds_config.detectors, ds_config.ensemble)
@@ -243,6 +256,7 @@ def _build_ds_config(cfg, dataset_dir: str) -> DataSourceConfig:
         history_interval=cfg.history_interval,
         history_retention=cfg.history_retention,
         trends_retention=cfg.trends_retention,
+        trends_range_to_sigma=cfg.trends_range_to_sigma,
         anomaly_keep_secs=cfg.anomaly_keep_secs,
         detectors=cfg.detectors,
         ensemble=cfg.ensemble,

@@ -33,9 +33,25 @@ admdb:
 #  data collection params (cascaded to data_sources)
 ##################################################
 batch_size: 100
+# history_interval sizes the recent window (retention x interval = how far back
+# to fetch) and is the *fallback* sample spacing.  It is not a promise about how
+# often an item is really collected: anything that converts a sample count into
+# seconds measures each item's own median clock gap and uses that instead, so a
+# Zabbix polling at 60s under the default 600 no longer reports 10x the duration
+# it actually saw (features/baseline.py::sample_interval).
 history_interval: 600        # seconds per history record
 history_retention: 18        # keep last N history records (~3h)
 trends_retention: 14         # days of trends to retain for stats
+# Trends rows are hourly aggregates, so trends_stats.std only measures how much
+# the hourly *average* moves — for a metric that idles most of the hour and
+# bursts for a few minutes it is 8-30x smaller than the spread of the raw
+# samples the changepoint detector and the duration gate compare against.
+# intra_std = mean(value_max - value_min) / trends_range_to_sigma recovers the
+# missing within-hour component, and consumers use hypot(std, intra_std).
+# The divisor is the range rule's d2 constant: 2.53 at 6 samples/hour, 3.26 at
+# 12, 4.64 at 60.  4.0 is a mid-range compromise — raise it to suppress more,
+# lower it to detect more.
+trends_range_to_sigma: 4.0
 anomaly_keep_secs: 86400     # keep anomalies for 1 day
 # An item whose newest history sample is older than this has stopped reporting;
 # its window stats no longer describe anything, so scoring it just produces a
@@ -54,8 +70,13 @@ detectors:
   changepoint:
     enabled: true
     weight: 0.3
-    cusum_h: 5.0             # decision threshold (in units of std)
-    cusum_k: 0.5             # slack (in units of std)
+    # Thresholds are in units of hypot(trends_stats.std, intra_std) — the sigma
+    # of a single raw sample — and the accumulator integrates over time, so the
+    # statistic no longer scales with how often the item happens to be polled.
+    cusum_h: 5.0             # decision threshold (in units of sigma)
+    cusum_k: 0.5             # slack (in units of sigma); must exceed the typical
+                             # per-sample deviation or the CUSUM drifts upward
+                             # under H0 and turns into a sample counter
   seasonal:
     enabled: true
     weight: 0.4

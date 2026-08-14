@@ -24,6 +24,12 @@ item that stops reporting used to keep its last-good row forever: a frozen
 `mean` compared against a baseline that keeps sliding, which saturates every
 detector that inner-joins on this table.  `expected_item_ids` closes that hole by
 deleting the rows of items that returned no samples.
+
+`intra_std` (trends only) records the *within-bucket* spread that `std` throws
+away.  `std` is the spread of hourly **averages**, so for a metric that is quiet
+most of the hour and bursts for a few minutes it is an order of magnitude
+smaller than the spread of the raw samples the detectors actually compare
+against.  See `features/baseline.py::intra_std_from_range` and `features/gating.py::baseline_sigma`.
 """
 from __future__ import annotations
 import logging
@@ -31,6 +37,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from features.baseline import intra_std_from_range
 from store.stats import _RollingStatsStore
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,8 @@ def update_rolling_stats(
     value_col: str = "value",
     batch_size: int = 100,
     expected_item_ids: list[int] | None = None,
+    range_cols: tuple[str, str] | None = None,
+    range_to_sigma: float = 4.0,
 ) -> list[int]:
     """
     Recompute the window stats for every item present in data_df.
@@ -61,6 +70,11 @@ def update_rolling_stats(
                         inside the window has stopped reporting, so its stats row
                         is deleted instead of being left frozen at the last value
                         it ever reported.
+    range_cols        : (min_col, max_col) of the per-bucket range, when the rows
+                        are aggregates over sub-samples (trends).  Enables
+                        `intra_std`; None leaves it NULL (history rows are raw
+                        samples, so they have no within-bucket spread).
+    range_to_sigma    : divisor turning a mean range into a sigma estimate.
 
     Returns the item ids whose stats rows were deleted.
     """
@@ -86,7 +100,7 @@ def update_rolling_stats(
         store.delete(stale)
 
     if not window.empty:
-        _upsert_window(store, window, value_col, batch_size)
+        _upsert_window(store, window, value_col, batch_size, range_cols, range_to_sigma)
 
     return stale
 
@@ -96,6 +110,8 @@ def _upsert_window(
     df: pd.DataFrame,
     value_col: str,
     batch_size: int,
+    range_cols: tuple[str, str] | None = None,
+    range_to_sigma: float = 4.0,
 ) -> None:
     agg = (
         df.groupby("itemid")
@@ -130,9 +146,19 @@ def _upsert_window(
     agg["last_clock"] = agg["last_clock"].astype(int)
     agg["zero_cnt"] = agg["zero_cnt"].astype(int)
 
+    if range_cols and all(c in df.columns for c in range_cols):
+        agg["intra_std"] = (
+            agg["itemid"].map(intra_std_from_range(df, range_cols, range_to_sigma)).astype(float)
+        )
+    else:
+        agg["intra_std"] = np.nan
+    # NULL, not NaN: consumers treat a missing intra_std as "unknown" and fall
+    # back to `std`, and NaN would survive the round-trip as a float.
+    agg["intra_std"] = agg["intra_std"].astype(object).where(agg["intra_std"].notna(), None)
+
     cols = [
         "itemid", "sum", "sqr_sum", "cnt", "mean", "std",
-        "last_clock", "zero_cnt", "max_value",
+        "last_clock", "zero_cnt", "max_value", "intra_std",
     ]
     for i in range(0, len(agg), batch_size):
         store.upsert(agg.iloc[i : i + batch_size][cols])

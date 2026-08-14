@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import pytest
 
@@ -119,14 +120,14 @@ def _band_series(n_anomalous: int, total: int = 18, hi_val: float = 100.0):
 def test_duration_single_spike_suppressed():
     d = DurationConfig(enabled=True, measure="count", sigma=2.0, lo_secs=600, hi_secs=3600)
     # 1 anomalous sample × 600s = 600s → at lo → scale 0
-    s = duration_scale(_band_series(1), trend_mean=0.0, trend_std=1.0, dcfg=d, history_interval=600)
+    s = duration_scale(_band_series(1), trend_mean=0.0, baseline_std=1.0, dcfg=d, sample_secs=600)
     assert s == 0.0
 
 
 def test_duration_sustained_full_weight():
     d = DurationConfig(enabled=True, measure="count", sigma=2.0, lo_secs=600, hi_secs=3600)
     # 6 anomalous samples × 600s = 3600s → at hi → scale 1
-    s = duration_scale(_band_series(6), trend_mean=0.0, trend_std=1.0, dcfg=d, history_interval=600)
+    s = duration_scale(_band_series(6), trend_mean=0.0, baseline_std=1.0, dcfg=d, sample_secs=600)
     assert s == 1.0
 
 
@@ -322,3 +323,89 @@ def test_select_rescued_ignores_noise_cluster():
     candidates = [_gated(2, is_anomaly=False, raw=0.9, mag=0.0)]
     clusters = {1: -1, 2: -1}       # both noise -> nothing to rescue
     assert select_rescued(candidates, clusters, confirmed_ids=[1]) == []
+
+
+# ----------------------------------------------------------------------
+# duration: real sample spacing and the raw-sample sigma (DETECTION.md §8.7)
+# ----------------------------------------------------------------------
+
+def _gating_cfg():
+    return MetricCategoriesConfig(
+        default_weight=1.0,
+        duration=DurationConfig(
+            enabled=True, measure="count", sigma=2.0, lo_secs=600, hi_secs=3600
+        ),
+        categories=[],
+    )
+
+
+def _history(item_id, values, interval):
+    return pd.DataFrame({
+        "itemid": [item_id] * len(values),
+        "clock": [i * interval for i in range(len(values))],
+        "value": values,
+    })
+
+
+def test_apply_gates_uses_each_item_s_real_sample_spacing():
+    """A 15-minute burst on a 60s-polled item is 900s, not 9000s.
+
+    history_interval is only the fallback; reading it as the per-sample duration
+    inflated every count-based duration by configured/real and made the gate a
+    no-op on every fast-polled item.
+    """
+    cfg = _gating_cfg()
+    scores = [AnomalyScore(item_id=3, score=0.9, is_anomaly=True, detector_scores={"zscore": 0.9})]
+    history_df = _history(3, [100.0] * 15 + [0.0] * 165, 60)
+    out = apply_gates(
+        scores, {3: "k"},
+        pd.DataFrame({"itemid": [3], "mean": [8.3], "std": [1.0]}),
+        pd.DataFrame({"itemid": [3], "mean": [0.0], "std": [1.0]}),
+        cfg, min_score=0.5, history_df=history_df, history_interval=600,
+    )
+    assert out[0].features["sample_secs"] == 60
+    # 15 samples x 60s = 900s, a tenth of the way up the 600->3600 ramp
+    assert out[0].features["dur_scale"] == pytest.approx(0.1)
+    assert out[0].is_anomaly is False
+
+
+def test_apply_gates_widens_the_band_with_intra_std():
+    """The duration band is tested against raw samples, so it needs the raw-sample
+    sigma: bursts that clear 2x the hourly-average std sit well inside 2x the
+    real spread."""
+    cfg = _gating_cfg()
+    values = [6.0] * 60 + [0.0] * 120
+    history_df = _history(4, values, 60)
+    scores = lambda: [
+        AnomalyScore(item_id=4, score=0.9, is_anomaly=True, detector_scores={"zscore": 0.9})
+    ]
+    history_stats = pd.DataFrame({"itemid": [4], "mean": [2.0], "std": [1.0]})
+
+    narrow = apply_gates(
+        scores(), {4: "k"}, history_stats,
+        pd.DataFrame({"itemid": [4], "mean": [0.0], "std": [1.0]}),
+        cfg, min_score=0.5, history_df=history_df, history_interval=600,
+    )
+    wide = apply_gates(
+        scores(), {4: "k"}, history_stats,
+        pd.DataFrame({"itemid": [4], "mean": [0.0], "std": [1.0], "intra_std": [4.0]}),
+        cfg, min_score=0.5, history_df=history_df, history_interval=600,
+    )
+    assert narrow[0].features["dur_scale"] == 1.0     # 60 x 60s = 3600s "anomalous"
+    assert wide[0].features["dur_scale"] == 0.0       # inside the real spread
+    assert wide[0].features["baseline_sigma"] == pytest.approx(math.hypot(1.0, 4.0))
+
+
+def test_apply_gates_missing_intra_std_keeps_old_behaviour():
+    """trends_stats rows written before the column existed must not change."""
+    cfg = _gating_cfg()
+    scores = [AnomalyScore(item_id=5, score=0.9, is_anomaly=True, detector_scores={"zscore": 0.9})]
+    out = apply_gates(
+        scores, {5: "k"},
+        pd.DataFrame({"itemid": [5], "mean": [5.0], "std": [1.0]}),
+        pd.DataFrame({"itemid": [5], "mean": [0.0], "std": [1.0], "intra_std": [float("nan")]}),
+        cfg, min_score=0.5,
+        history_df=_history(5, [100.0] * 6 + [0.0] * 12, 600), history_interval=600,
+    )
+    assert out[0].features["baseline_sigma"] == 1.0
+    assert out[0].features["dur_scale"] == 1.0

@@ -268,6 +268,13 @@ class DataSourceConfig(BaseModel):
     history_interval: int = 600
     history_retention: int = 18
     trends_retention: int = 14
+    # Trends rows are hourly aggregates, so `std` only measures how much the
+    # hourly *average* moves.  `intra_std = mean(value_max - value_min) / this`
+    # recovers the within-hour sample spread that raw-history consumers need.
+    # The divisor is the range rule's d2 constant: 2.53 at 6 samples/hour, 3.26
+    # at 12, 4.64 at 60.  4.0 is a mid-range compromise -- raise it to detect
+    # more, lower it to suppress more.
+    trends_range_to_sigma: float = 4.0
     anomaly_keep_secs: int = 86400
     staleness_secs: int = 3600
 
@@ -334,6 +341,13 @@ class AppConfig(BaseModel):
     history_interval: int = 600
     history_retention: int = 18
     trends_retention: int = 14
+    # Trends rows are hourly aggregates, so `std` only measures how much the
+    # hourly *average* moves.  `intra_std = mean(value_max - value_min) / this`
+    # recovers the within-hour sample spread that raw-history consumers need.
+    # The divisor is the range rule's d2 constant: 2.53 at 6 samples/hour, 3.26
+    # at 12, 4.64 at 60.  4.0 is a mid-range compromise -- raise it to detect
+    # more, lower it to suppress more.
+    trends_range_to_sigma: float = 4.0
     anomaly_keep_secs: int = 86400
     staleness_secs: int = 3600
     detectors: DetectorsConfig = DetectorsConfig()

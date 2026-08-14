@@ -56,7 +56,7 @@ Tables are named `{ds_name}_{suffix}` (`store/base.py`).
 |---|---|---|
 | `{ds}_history` | `itemid, clock, value` | hourly (cache for changepoint/clustering) |
 | `{ds}_history_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | hourly |
-| `{ds}_trends_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | daily |
+| `{ds}_trends_stats` | `itemid, sum, sqr_sum, cnt, mean, std, intra_std` | daily |
 | `{ds}_hour_stats` | `itemid, hour_of_day, mean, std, cnt` | daily |
 | `{ds}_history_updates` | `id=1, startep, endep` | hourly (watermark only) |
 | `{ds}_trends_updates` | `id=1, startep, endep` | daily (watermark only) |
@@ -86,6 +86,33 @@ sample in the window is stored as `last_clock`. Leaving the row behind would
 freeze `mean` at the last value the item ever reported while the baseline kept
 sliding — see §8.5. When `expected_item_ids` is not supplied the old behaviour
 holds and an empty window changes nothing.
+
+**`intra_std` — the spread `std` throws away.** Trends rows are hourly
+aggregates, so `std` measures how much the hourly *average* moves. It says
+nothing about how far an individual sample strays inside an hour, and that is
+the quantity every consumer of raw history actually needs. For a metric that
+idles most of the hour and bursts for a few minutes the two differ by 8-30x.
+
+```
+intra_std = mean(value_max - value_min) / trends_range_to_sigma     # default 4.0
+```
+
+The range rule `sigma = E[max - min] / d2(n)` recovers it from the min/max
+Zabbix already stores. `d2` depends on samples-per-bucket (2.53 at 6/h, 3.26 at
+12/h, 4.64 at 60/h) and that count is not recorded, so the divisor is one
+mid-range constant. The **mean** range is deliberate: it is inflated by the
+occasional violent hour, which is exactly the metric class this holds back.
+
+Consumers combine the two components in quadrature — independent by the law of
+total variance — via `features/baseline.py::baseline_sigma`:
+
+```
+sigma = hypot(trends_stats.std, intra_std)
+```
+
+and **fail open to `std`** when `intra_std` is NULL: rows written before the
+column existed, and `history_stats` rows, which are raw samples and have no
+within-bucket spread by construction. Only trends carry it.
 
 The critical property is that samples ageing out of the back of the window stop
 contributing: that is what lets a step change be absorbed into the baseline
@@ -184,11 +211,13 @@ Cost is one pre-fetched DB read; the pipeline reads only
 centred on the trends baseline.
 
 ```
-slack    = cusum_k × trend_std          (default k = 0.5)
-decision = cusum_h × trend_std          (default h = 5.0)
+sigma    = hypot(trends_stats.std, intra_std)      # §1.3 — raw-sample scale
+w        = sample_interval(clocks) / history_interval
+slack    = cusum_k × sigma × w                     (default k = 0.5)
+decision = cusum_h × sigma                         (default h = 5.0)
 
 for v in values:
-    dev    = v - trend_mean
+    dev    = (v - trend_mean) × w
     s_pos  = max(0, s_pos + dev - slack)
     s_neg  = max(0, s_neg - dev - slack)
     s_max  = max(s_max, s_pos, s_neg)
@@ -200,6 +229,26 @@ score = min( (s_max - decision)/decision × 0.5 + 0.5, 1.0 ) otherwise
 This rewards **sustained** deviation: a single outlier adds one `dev` then
 decays against the slack, whereas a level shift accumulates every sample. Cost
 is O(`history_retention`) per candidate item.
+
+Two properties the test depends on, both of which were once wrong and made the
+detector fire on essentially everything (§8.7):
+
+**`sigma` is the raw-sample scale, not `trends_stats.std`.** A CUSUM only works
+because the slack `k·sigma` exceeds the typical per-sample deviation, giving the
+accumulator negative drift under H0 — that is what makes `s_max` stationary and
+lets one fixed `decision` mean the same thing at any window length. Feed it a
+sigma computed from hourly *averages* and the slack falls far below the sample
+noise of a bursty metric, the drift turns positive, and `s_max` grows linearly
+in N. The statistic stops being a changepoint test and becomes a sample counter.
+
+**The accumulator integrates over time, not over samples.** Zabbix items are
+collected at whatever interval their template says. Weighting each step by
+`dt / history_interval` makes the statistic depend on what the metric did, not on
+how often it was polled — otherwise a 60 s item scores 10x a 600 s item watching
+the identical event. `history_interval` only anchors what `cusum_h` means; only
+the *ratio* to the item's real spacing affects the result.
+
+An item is skipped when `sigma <= 0` (was `trend_std <= 0`).
 
 ### 2.5 EnsembleDetector
 
@@ -263,11 +312,21 @@ A collapse to zero always scores `mag = 1.0` under `relative` mode
 (`Δ/baseline ≈ 1`), which is why container/packet/session categories are
 declared `relative` and placed **before** the byte-based `network`/`cpu` rules.
 
-**Duration** — how long the item stayed outside `trend_mean ± sigma·trend_std`
-inside the window; `count` (total anomalous samples) or `consecutive` (longest
-run), times `history_interval`, then ramped `lo_secs → hi_secs`. Default
-`lo_secs 600 / hi_secs 3600`: a single 10-minute spike is suppressed, a
-sustained hour scores full.
+**Duration** — how long the item stayed outside
+`trend_mean ± sigma·baseline_sigma` inside the window; `count` (total anomalous
+samples) or `consecutive` (longest run), times **that item's own median clock
+gap**, then ramped `lo_secs → hi_secs`. Default `lo_secs 600 / hi_secs 3600`: a
+single 10-minute spike is suppressed, a sustained hour scores full.
+
+Both inputs are per-item measurements rather than config values, for the same
+reason as §2.4. The band uses `baseline_sigma` (§1.3) because it is tested
+against raw samples, and the spacing comes from
+`features/baseline.py::sample_interval` because `history_interval` is a *window
+sizing* parameter — `retention × interval` is how far back to fetch — not a
+promise about collection frequency. Reading it as a per-sample duration scaled
+every count by `configured / real`: 10x on a Zabbix collecting at 60 s under the
+default 600, which made the gate a no-op (§8.7). The measured value is recorded
+in `features.sample_secs`, the sigma in `features.baseline_sigma`.
 
 **Idle baseline** — a metric that reads zero whenever its resource is idle
 (VMware guest disk latency, outstanding-IO depth, a rarely-used counter) has a
@@ -514,6 +573,7 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 |---|---|---|
 | `history_interval` / `history_retention` | 600 / 18 | recent window ≈ 3 h |
 | `trends_retention` | 14 | days of baseline |
+| `trends_range_to_sigma` | 4.0 | divisor turning the mean hourly range into `intra_std` (§1.3); raise to suppress more |
 | `staleness_secs` | 3600 | skip items whose newest history sample is older than this (0 = off, §8.5) |
 | `detectors.*.lambda_threshold` | 3.0 | z at which score = 0.5; saturates at 2λ |
 | `detectors.changepoint.cusum_h` / `cusum_k` | 5.0 / 0.5 | decision / slack, in std units |
@@ -698,3 +758,75 @@ What remains is dominated by one host (`IMTDB123`, four mssql items) whose cache
 behaviour genuinely stepped. There is no host or group predicate in
 `item_filters` / `anomaly_filters` — only `key_` and `units` — so "mute this
 host" is currently inexpressible.
+
+### 8.7 Everything was measured against the wrong sigma and the wrong clock (fixed)
+
+The 2026-08-14 15:29 cycle flagged 31 items and a reviewer rejected all of them.
+They were not a mixed bag: every one was a metric that idles most of the hour and
+bursts for a few minutes — mssql latch/page rates, Windows disk-queue counters,
+SQL batch requests, VMware guest CPU.
+
+Two numbers gave it away. **All 31 scored `changepoint: 1.0`**, and **all 31 had
+`dur_scale = 1.0`**. Neither was measuring anything.
+
+**Cause 1 — `trend_std` is not the sample scale.** `trends_stats.std` is the
+spread of hourly *averages*. Averaging an hour of a bursty metric flattens the
+bursts, so it is one to two orders of magnitude below the spread of the raw
+samples the CUSUM and the duration band are actually tested against. Measured on
+the export as `mean(value_max - value_min) / std`:
+
+| items | ratio |
+|---|---|
+| `cal-qa-tssdb-active-ip` mssql latch/page (7) | 15.6–31.7x |
+| `NAS01027` disk queue counters (4) | 8.1–22.6x |
+| `IMTDBUAT48121` SQL batch requests/sec | 12.1x |
+| `IMTDB123` `mssql.scan_to_search` | 11.2x |
+
+A CUSUM is only stationary under H0 because its slack `k·sigma` outruns the
+typical per-sample deviation. With the slack set from the hourly-average std the
+drift turned positive and `s_max` grew linearly in N: median `s_max / decision`
+was **65**, where **2** already saturates the score. The detector had become a
+sample counter. On the 555-item stratified sample (`check_20260813_0921`) it
+returned 1.0 for 73% of all items — including **13 of the 25** items the cheap
+detectors had scored *low*. A vote that constant is worse than no vote, because
+`require_any: 2` plus contributing-weight normalisation (§2.5) lets it promote
+any single marginal zscore/seasonal signal to a confirmed anomaly on its own.
+
+**Cause 2 — per-sample accumulation.** The same physical excursion scored 10x
+higher on a 60 s item than on a 600 s one, purely from poll frequency.
+
+**Cause 3 — `history_interval` read as a sample duration.** The duration gate
+computed `anomalous_secs = n_anomalous × history_interval`, i.e. `× 600`, on a
+Zabbix collecting at 60 s. Every duration was inflated 10x and the gate — whose
+entire job is suppressing brief spikes — never fired. Real anomalous times on
+the export: 9 min (`Processor Queue Length`), 11 min (`checkpoint_pages`,
+`lazy_writes`), 14 min (`page_writes`, `Disk Reads/sec`), 17 min
+(`Avg. Disk Read Queue`), 18 min (`Batch Requests/sec`) — all booked as ≥ 90 min.
+
+**Fixes:** `intra_std` in `trends_stats` and `baseline_sigma` for the raw-sample
+scale (§1.3); time-integrated CUSUM (§2.4); per-item `sample_interval` for the
+duration gate (§2.6). Replaying the export through the real code: **31 → 12**.
+Against the 19 human-labelled queues in `datasets/queues/` (570 labels) the
+change is precision-positive and recall-neutral — 0.889/0.122 → 0.904/0.120,
+FP 6 → 5, TP 48 → 47. `cusum_h` was left at 5.0: sweeping it to 10 and 20 moved
+those numbers by at most one item, because the gates and filters dominate.
+
+Pinned by `tests/unit/test_changepoint_production_sample.py`,
+`tests/unit/test_baseline.py`, and the new cases in
+`tests/unit/test_changepoint_detector.py`, `test_gating.py`,
+`test_rolling_stats.py`.
+
+**Migration:** self-healing. `intra_std` is added with
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and every consumer fails open to the
+old behaviour while it is NULL, so the fix takes effect for an item the first
+time `anomdec-update-stats` runs after deploying. The duration and CUSUM changes
+need no migration.
+
+**What this does not fix.** The 12 survivors are held up by two causes outside
+this change: `hour_stats.std` is a 10–13 sample standard deviation with no floor
+(`system.cpu.intr` has `hour_std` 13.6 against an overall std of 884, giving
+z ≈ 200) and is compared against a *3-hour* recent mean rather than the matching
+hour; and a detector that abstains does not dilute the ensemble, so
+`sug-cdrmediator02 call.stats` is confirmed by changepoint plus a marginal
+zscore even though the seasonal detector correctly judged the level normal for
+the hour (z = 1.62) and stayed silent.

@@ -147,7 +147,9 @@ class DetectionPipeline:
             )
             cp_det = ChangepointDetector(ds_cfg.detectors.changepoint)
             scores_per_detector["changepoint"] = cp_det.detect(
-                history_df=candidate_history_df, trends_stats=trends_stats
+                history_df=candidate_history_df,
+                trends_stats=trends_stats,
+                reference_interval=ds_cfg.history_interval,
             )
 
         # --- Step 5: ensemble ---

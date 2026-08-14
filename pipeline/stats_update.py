@@ -62,6 +62,8 @@ class StatsUpdatePipeline:
             # Empty batches are not skipped: items that reported nothing inside
             # the window must have their stale rows deleted, otherwise a frozen
             # baseline keeps re-flagging an item that no longer sends data.
+            # value_min/value_max ride along so intra_std can be derived: `std`
+            # alone describes the hourly average, not the samples inside it.
             stale = update_rolling_stats(
                 store=trends_store,
                 data_df=trends_df.rename(columns={"value_avg": "value"}),
@@ -70,6 +72,8 @@ class StatsUpdatePipeline:
                 value_col="value",
                 batch_size=batch_size,
                 expected_item_ids=batch,
+                range_cols=("value_min", "value_max"),
+                range_to_sigma=ds_cfg.trends_range_to_sigma,
             )
             if stale:
                 hour_store.delete(stale)

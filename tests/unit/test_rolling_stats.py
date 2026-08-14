@@ -243,3 +243,67 @@ def test_items_not_expected_are_left_alone():
     )
 
     assert set(store.rows) == {1, 2}
+
+
+# ----------------------------------------------------------------------
+# intra_std: the within-bucket spread `std` throws away
+# ----------------------------------------------------------------------
+
+def _trends_window(itemid, avgs, lows, highs, start=0, step=3600):
+    return pd.DataFrame({
+        "itemid": itemid,
+        "clock": [start + i * step for i in range(len(avgs))],
+        "value": avgs,
+        "value_min": lows,
+        "value_max": highs,
+    })
+
+
+def test_intra_std_written_from_the_bucket_range():
+    store = FakeStatsStore()
+    df = _trends_window(1, [1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [4.0, 8.0, 6.0])
+    update_rolling_stats(
+        store=store, data_df=df, startep=0, endep=10**9,
+        range_cols=("value_min", "value_max"), range_to_sigma=4.0,
+    )
+    row = store.rows[1]
+    # Hourly averages never move, but the samples inside each hour swing by 6 on
+    # average -- exactly the component `std` cannot see.
+    assert row["std"] == pytest.approx(0.0)
+    assert row["intra_std"] == pytest.approx(6.0 / 4.0)
+
+
+def test_intra_std_is_null_without_range_columns():
+    """History rows are raw samples: no within-bucket spread exists, and NULL
+    (not NaN) is what makes consumers fall back to `std`."""
+    store = FakeStatsStore()
+    update_rolling_stats(
+        store=store, data_df=_series(1, [1.0, 2.0, 3.0], start=0), startep=0, endep=10**9,
+    )
+    assert store.rows[1]["intra_std"] is None
+
+
+def test_intra_std_ignores_range_columns_when_absent_from_the_frame():
+    store = FakeStatsStore()
+    update_rolling_stats(
+        store=store, data_df=_series(1, [1.0, 2.0], start=0), startep=0, endep=10**9,
+        range_cols=("value_min", "value_max"),
+    )
+    assert store.rows[1]["intra_std"] is None
+
+
+def test_intra_std_slides_with_the_window():
+    """Same guarantee as mean/std: a violent hour must age out of the estimate."""
+    store = FakeStatsStore()
+    df = _trends_window(1, [1.0] * 4, [0.0] * 4, [100.0, 1.0, 1.0, 1.0])
+    update_rolling_stats(
+        store=store, data_df=df, startep=0, endep=10**9,
+        range_cols=("value_min", "value_max"), range_to_sigma=4.0,
+    )
+    wide = store.rows[1]["intra_std"]
+
+    update_rolling_stats(
+        store=store, data_df=df, startep=3600, endep=10**9,
+        range_cols=("value_min", "value_max"), range_to_sigma=4.0,
+    )
+    assert store.rows[1]["intra_std"] < wide / 10
