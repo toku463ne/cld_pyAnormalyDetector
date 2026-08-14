@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 def _fmt(ep: int) -> str:
-    return dt.datetime.utcfromtimestamp(int(ep)).strftime("%m-%d %H:%M")
+    return dt.datetime.fromtimestamp(int(ep), dt.timezone.utc).strftime("%m-%d %H:%M")
 
 
 def _stats_at(trends: pd.DataFrame, ds_cfg: DataSourceConfig, endep: int) -> pd.DataFrame:
@@ -184,11 +184,21 @@ def replay(dataset: str, cfg, max_age: int, recency: bool) -> dict:
     recorded: dict[int, int] = {}
     per_cycle = []
     onsets: dict[int, int] = {}
+    # Onset age at the moment each item first became detectable.  When an item is
+    # lost to the recency gate this is what says why: an age already past
+    # max_age at first detection means the detectors took that long to notice,
+    # not that the gate was too tight by a little.
+    age_at_first: dict[int, float] = {}
     for endep in cycles:
         flagged, _clusters, cycle_onsets = run_cycle(
             ds_cfg, src, history, trends, details, endep, max_age
         )
         onsets.update(cycle_onsets or {})
+        for i in flagged:
+            if i not in age_at_first:
+                o = (cycle_onsets or {}).get(i)
+                if o is not None:
+                    age_at_first[i] = (endep - o) / 3600.0
         recorded = {i: c for i, c in recorded.items() if endep - c <= ds_cfg.anomaly_keep_secs}
         new = [i for i in flagged if i not in recorded]
         for i in new:
@@ -197,6 +207,7 @@ def replay(dataset: str, cfg, max_age: int, recency: bool) -> dict:
     return {
         "cycles": per_cycle, "recorded": dict(recorded), "details": details,
         "onsets": onsets, "span_start": cycles[0], "span_end": cycles[-1],
+        "age_at_first": age_at_first,
     }
 
 
@@ -248,11 +259,22 @@ def main() -> int:
         print(f"  missed with an onset inside the replayed span: {len(real)}"
               f"   (+{len(uncovered)} whose onset predates it — not covered by this export)")
         if real and not args.quiet:
+            lags = []
             for i in real:
                 d = res["details"].get(i) or baseline["details"].get(i)
-                age = (res["span_end"] - onsets[i]) / 3600
-                print(f"      MISSED {i:>8} onset {age:5.1f}h before the last cycle  "
-                      f"{getattr(d, 'host_name', '?')[:22]:22s} {getattr(d, 'key_', '?')[:34]}")
+                lag = baseline["age_at_first"].get(i)
+                lags.append(lag)
+                why = (
+                    f"detectors first saw it {lag:.1f}h after onset" if lag is not None
+                    else "never detectable even with the gate off"
+                )
+                print(f"      MISSED {i:>8} {getattr(d, 'host_name', '?')[:22]:22s} "
+                      f"{getattr(d, 'key_', '?')[:30]:30s} {why}")
+            usable = [l for l in lags if l is not None]
+            if usable:
+                need = max(usable)
+                print(f"      -> detection lag, not gate width: max_age_secs would have to "
+                      f"reach {need:.1f}h ({int(need*3600)}) to catch all of these")
     return 0
 
 
