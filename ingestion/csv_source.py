@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 _HIST_COLS = ["itemid", "clock", "value"]
 _TRENDS_COLS = ["itemid", "clock", "value_min", "value_avg", "value_max"]
 _ITEMS_COLS = ["group_name", "hostid", "host_name", "itemid", "item_name"]
+# Written by newer exports; absent in datasets captured before they were added.
+_ITEMS_OPTIONAL_COLS = ["units"]
 _EVENT_COLS = ["clock", "host_name", "severity", "name"]
 
 
@@ -52,7 +54,10 @@ class CsvSource:
 
     def _read_items(self) -> pd.DataFrame:
         path = os.path.join(self._dir, "items.csv.gz")
-        df = pd.read_csv(path, compression="gzip", header=0, names=_ITEMS_COLS)
+        # Read by header, not by position: the file gained a `units` column and
+        # a positional read would silently mis-bind every column after it.
+        df = pd.read_csv(path, compression="gzip", header=0)
+        df = df.reindex(columns=_ITEMS_COLS + _ITEMS_OPTIONAL_COLS, fill_value="")
         df["itemid"] = df["itemid"].astype(int)
         df["hostid"] = df["hostid"].astype(int)
         return df
@@ -89,7 +94,7 @@ class CsvSource:
                 item_name=str(row.item_name),
                 group_name=str(row.group_name),
                 key_=str(row.item_name),
-                units="",
+                units=str(getattr(row, "units", "") or ""),
             )
             for row in df.itertuples()
         ]

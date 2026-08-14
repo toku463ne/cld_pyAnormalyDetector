@@ -3,9 +3,10 @@ Metric-category gating
 ======================
 Pure, DB-free functions that adjust ensemble scores by:
 
-  effective_score = raw_score × category_weight × magnitude_scale × duration_scale
+  effective_score = raw_score × category_weight × magnitude_scale
+                              × duration_scale × idle_scale
 
-All three multipliers are in [floor, 1].  The driving quantity for magnitude is
+All four multipliers are in [floor, 1].  The driving quantity for magnitude is
 always the change from baseline Δ = |recent_mean - trend_mean|, never the raw
 current value, so a host running steadily at a high level (Δ≈0) is not flagged.
 
@@ -20,6 +21,7 @@ import pandas as pd
 
 from config.schema import (
     DurationConfig,
+    IdleBaselineConfig,
     MagnitudeConfig,
     MetricCategoriesConfig,
     MetricCategoryRule,
@@ -75,6 +77,33 @@ def magnitude_scale(
     return max(ramp(x, mcfg.lo, mcfg.hi), mcfg.floor)
 
 
+def idle_scale(
+    recent_mean: float | None,
+    zero_cnt: float | None,
+    cnt: float | None,
+    max_value: float | None,
+    icfg: IdleBaselineConfig,
+) -> float:
+    """Suppress activity on a baseline that is zero most of the time.
+
+    Fail-open (returns 1.0) when disabled, when the baseline is not
+    idle-dominated, or when the stats needed to judge are missing — an older
+    `trends_stats` row without `zero_cnt` must not silently veto everything.
+    """
+    if not icfg.enabled:
+        return 1.0
+    if recent_mean is None or zero_cnt is None or cnt is None or max_value is None:
+        return 1.0
+    if cnt <= 0:
+        return 1.0
+    if float(zero_cnt) / float(cnt) < icfg.max_zero_ratio:
+        return 1.0
+    # Idle-dominated: only an unprecedented level is interesting.
+    if float(recent_mean) > float(max_value):
+        return 1.0
+    return icfg.floor
+
+
 def duration_scale(
     series: pd.Series | None,
     trend_mean: float,
@@ -119,15 +148,20 @@ def apply_gates(
 ) -> list[AnomalyScore]:
     """
     Recompute each score's `score` (= effective score) and `is_anomaly` flag by
-    applying category weight, magnitude scale and duration scale.
+    applying category weight, magnitude scale, duration scale and the
+    idle-baseline gate.
 
     The per-detector breakdown (`detector_scores`) is preserved unchanged; the
-    raw ensemble score and the three gate multipliers are recorded in `features`
-    (raw_score, gate_weight, mag_scale, dur_scale, delta) for interpretability.
+    raw ensemble score and the four gate multipliers are recorded in `features`
+    (raw_score, gate_weight, mag_scale, dur_scale, idle_scale, delta) for
+    interpretability.
     """
     h_mean = _series(history_stats, "mean")
     t_mean = _series(trends_stats, "mean")
     t_std = _series(trends_stats, "std")
+    t_zero_cnt = _series(trends_stats, "zero_cnt")
+    t_cnt = _series(trends_stats, "cnt")
+    t_max = _series(trends_stats, "max_value")
 
     dur_enabled = cfg.duration.enabled and history_df is not None and not history_df.empty
     hist_by_item: dict[int, pd.Series] = {}
@@ -162,7 +196,15 @@ def apply_gates(
             history_interval,
         )
 
-        effective = s.score * weight * mag * dur
+        idle = idle_scale(
+            recent,
+            t_zero_cnt.get(s.item_id),
+            t_cnt.get(s.item_id),
+            t_max.get(s.item_id),
+            cfg.idle_baseline,
+        )
+
+        effective = s.score * weight * mag * dur * idle
         result.append(
             AnomalyScore(
                 item_id=s.item_id,
@@ -175,13 +217,18 @@ def apply_gates(
                     "gate_weight": weight,
                     "mag_scale": mag,
                     "dur_scale": dur,
+                    "idle_scale": idle,
                     "delta": delta,
                 },
             )
         )
 
     n_anom = sum(1 for s in result if s.is_anomaly)
-    logger.info("gating: %d scores → %d anomalies after category/magnitude/duration", len(result), n_anom)
+    logger.info(
+        "gating: %d scores → %d anomalies after category/magnitude/duration/idle",
+        len(result),
+        n_anom,
+    )
     return result
 
 

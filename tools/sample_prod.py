@@ -219,6 +219,9 @@ def _export_csvs(
             "host_name": d.host_name,
             "itemid": d.item_id,
             "item_name": d.item_name,
+            # Needed to author unit-scoped anomaly_filters (min_abs_diff in the
+            # metric's own unit) from an exported dataset.
+            "units": d.units,
         }
         for d in details
     ])

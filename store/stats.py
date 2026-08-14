@@ -15,18 +15,30 @@ class _RollingStatsStore(BaseStore):
             cnt        INTEGER,
             mean       FLOAT,
             std        FLOAT,
-            last_clock INTEGER
+            last_clock INTEGER,
+            zero_cnt   INTEGER,
+            max_value  FLOAT
         )
     """
 
-    _COLS = ["itemid", "sum", "sqr_sum", "cnt", "mean", "std", "last_clock"]
+    _COLS = [
+        "itemid", "sum", "sqr_sum", "cnt", "mean", "std",
+        "last_clock", "zero_cnt", "max_value",
+    ]
+
+    # Columns added after the table first shipped; migrated in place.
+    _ADDED_COLS = (
+        ("last_clock", "INTEGER"),
+        ("zero_cnt", "INTEGER"),
+        ("max_value", "FLOAT"),
+    )
 
     def _ensure_table(self) -> None:
         super()._ensure_table()
-        # last_clock was added after the table shipped; migrate in place.
-        self._db.exec_sql(
-            f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS last_clock INTEGER"
-        )
+        for name, sqltype in self._ADDED_COLS:
+            self._db.exec_sql(
+                f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS {name} {sqltype}"
+            )
 
     def read(self, item_ids: list[int] | None = None) -> pd.DataFrame:
         where = ""

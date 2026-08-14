@@ -105,6 +105,12 @@ def _upsert_window(
                 "sqr_sum": (value_col, lambda x: (x**2).sum()),
                 "cnt": (value_col, "count"),
                 "last_clock": ("clock", "max"),
+                # zero_cnt / max_value describe the *shape* of the baseline, not
+                # its centre: a metric that sits at zero whenever the resource is
+                # idle has a mean near zero, so relative change against it is
+                # meaningless.  See features/gating.py::idle_scale.
+                "zero_cnt": (value_col, lambda x: int((x == 0).sum())),
+                "max_value": (value_col, "max"),
             }
         )
         .reset_index()
@@ -122,7 +128,11 @@ def _upsert_window(
     ).clip(lower=0)
     agg["std"] = np.sqrt(variance).fillna(0)
     agg["last_clock"] = agg["last_clock"].astype(int)
+    agg["zero_cnt"] = agg["zero_cnt"].astype(int)
 
-    cols = ["itemid", "sum", "sqr_sum", "cnt", "mean", "std", "last_clock"]
+    cols = [
+        "itemid", "sum", "sqr_sum", "cnt", "mean", "std",
+        "last_clock", "zero_cnt", "max_value",
+    ]
     for i in range(0, len(agg), batch_size):
         store.upsert(agg.iloc[i : i + batch_size][cols])

@@ -221,18 +221,19 @@ a 2-of-3 cascade.
 Defaults (`default.yml`): weights zscore 0.3 / changepoint 0.3 / seasonal 0.4,
 `min_score: 0.7`, `require_any: 2`.
 
-### 2.6 Gating — category, magnitude, duration
+### 2.6 Gating — category, magnitude, duration, idle baseline
 
 `features/gating.py`. Pure functions, used identically by the pipeline and the
 backtester so offline evaluation matches runtime.
 
 ```
-effective_score = raw_ensemble_score × category_weight × magnitude_scale × duration_scale
+effective_score = raw_ensemble_score × category_weight × magnitude_scale
+                                     × duration_scale × idle_scale
 is_anomaly      = effective_score >= ensemble.min_score
 ```
 
-The raw score and all three multipliers are preserved in `features`
-(`raw_score`, `gate_weight`, `mag_scale`, `dur_scale`, `delta`).
+The raw score and all four multipliers are preserved in `features`
+(`raw_score`, `gate_weight`, `mag_scale`, `dur_scale`, `idle_scale`, `delta`).
 
 **Ramp helper** — `ramp(x, lo, hi)`: 0 at/below `lo`, 1 at/above `hi`, linear
 between; degenerates to a hard threshold at `hi` when `hi <= lo`.
@@ -240,6 +241,11 @@ between; degenerates to a hard threshold at `hi` when `hi <= lo`.
 **Category** (`classify`) — first category whose `key_patterns` fnmatch-match
 `items.key_` wins; order in `default.yml` is therefore significant. Unmatched
 items get `default_weight`.
+
+fnmatch anchors at the start of the key, so `vfs.dev.*` does **not** match
+`vmware.vm.vfs.dev.write[...]`. Every vendor-prefixed variant has to be spelled
+out; missing one silently drops the item into the catch-all, which is what
+produced 62 of the 93 detections in the 2026-08-14 10:46 cycle (§8.6).
 
 **Magnitude** — always driven by the *change from baseline*
 `Δ = |recent_mean - trend_mean|`, never the current absolute level, so a host
@@ -263,9 +269,25 @@ run), times `history_interval`, then ramped `lo_secs → hi_secs`. Default
 `lo_secs 600 / hi_secs 3600`: a single 10-minute spike is suppressed, a
 sustained hour scores full.
 
-Both magnitude and duration **fail open** (`scale = 1.0`) when the evidence is
-missing — no baseline stats, no raw history, `trend_std <= 0`. A real anomaly is
-never suppressed for lack of evidence of brevity.
+**Idle baseline** — a metric that reads zero whenever its resource is idle
+(VMware guest disk latency, outstanding-IO depth, a rarely-used counter) has a
+baseline mean near zero, so *any* activity is a relative change of tens or
+hundreds. No relative threshold can discriminate on such a series, and no
+absolute one can either without knowing the unit.
+
+The unit-free question that does discriminate is whether the current level is
+**unprecedented**. When `zero_cnt / cnt >= max_zero_ratio` over the trends
+window, the item is suppressed unless `recent_mean` exceeds `max_value`, the
+highest value anywhere in that window. A normally-zero error counter that spikes
+off the scale still fires; the routine idle→busy transitions do not.
+
+`zero_cnt` and `max_value` are computed by the same daily `GROUP BY` that
+produces `trends_stats` (§1.3), so this costs nothing at detection time.
+
+All four gates **fail open** (`scale = 1.0`) when the evidence is missing — no
+baseline stats, no raw history, `trend_std <= 0`, or a `trends_stats` row
+written before `zero_cnt`/`max_value` existed. A real anomaly is never
+suppressed for lack of evidence.
 
 ### 2.7 Filters
 
@@ -499,6 +521,7 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `ensemble.require_any` | 2 | detectors that must agree |
 | `metric_categories.categories[].weight` | per-category | prior importance by metric type |
 | `metric_categories.duration.*` | 600 → 3600 s | suppress brief spikes |
+| `metric_categories.idle_baseline.max_zero_ratio` | 0.8 | baseline zero more often than this → require an unprecedented level (§2.6) |
 | `clustering.corr_eps` | 0.10 | DBSCAN radius on correlation distance |
 | `clustering.raw_corr_min` | 0.99 | gate for the raw-level channel |
 | `clustering.detection_period` | 43200 | seconds of history used for clustering |
@@ -646,3 +669,32 @@ the first run after deploying purges the accumulated rows.
 Covered by `tests/unit/test_rolling_stats.py`, `tests/unit/test_staleness.py`,
 and `tests/unit/test_staleness_production_sample.py`, which pins the numbers
 above against the real export.
+
+### 8.6 Near-zero baselines and mis-scaled categories (fixed)
+
+The cycle immediately after §8.5 produced 93 flagged items, essentially all of
+which a reviewer marked as noise. Three causes:
+
+1. **62 VMware guest storage/disk items** — `vmware.vm.storage.*`,
+   `vmware.vm.vfs.dev.*`, `vmware.hv.datastore.*` matched **no** category,
+   because fnmatch anchors at the start and the `disk` patterns were
+   `vfs.dev.*` / `vfs.fs.*`. They fell into the catch-all (`relative`, lo 0.5)
+   and their baselines are zero 81–100 % of the trends window
+   (`trend_mean` ≈ 0.003), so the relative change was 10–472×.
+2. **9 `vmware.vm.cpu.usage` items** — reported in **Hz** (1e8–1e9) but matched
+   by the `cpu` category, whose `absolute` lo 10 / hi 40 is written for
+   percentage points. Δ = 7e6 Hz saturates the ramp, so a 0.6 % move scored
+   full magnitude. Only `vmware.vm.cpu.usage.perf` is a percentage.
+3. **A tail of low-count metrics** — `proc.num[sshd]` going 1 → 3 sessions,
+   `mysql.com_insert.rate` moving 0.007/s. Large relative change, trivial
+   absolute change.
+
+Fixes: the idle-baseline gate (§2.6) for (1), a `cpu_perf` / `cpu_hz` split for
+(2), and key-scoped `min_abs_diff` rules in `anomaly_filters` for (3). Replaying
+the export through the real gating code: **93 → 14 after the gates → 6 after the
+filters**. Pinned by `tests/unit/test_gating_production_sample.py`.
+
+What remains is dominated by one host (`IMTDB123`, four mssql items) whose cache
+behaviour genuinely stepped. There is no host or group predicate in
+`item_filters` / `anomaly_filters` — only `key_` and `units` — so "mute this
+host" is currently inexpressible.

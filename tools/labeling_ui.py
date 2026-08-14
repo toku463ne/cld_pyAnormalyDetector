@@ -113,16 +113,19 @@ def load_dataset(data_dir: str) -> dict:
                                      "host_name","item_name","clusterid",
                                      "trend_mean","trend_std"])
 
+    items_cols = ["group_name", "hostid", "host_name", "itemid", "item_name", "units"]
     items_path = d / "items.csv.gz"
     if items_path.exists():
-        items = pd.read_csv(items_path, header=0,
-                            names=["group_name","hostid","host_name","itemid","item_name"])
+        # By header, not by position: the file gained a `units` column and a
+        # positional read would mis-bind every column after it.
+        items = pd.read_csv(items_path, header=0)
+        items = items.reindex(columns=items_cols, fill_value="")
         items = _drop_dup_header(items, "itemid")
         items["itemid"] = pd.to_numeric(items["itemid"], errors="coerce")
         items = items.dropna(subset=["itemid"])
         items["itemid"] = items["itemid"].astype(int)
     else:
-        items = pd.DataFrame(columns=["group_name","hostid","host_name","itemid","item_name"])
+        items = pd.DataFrame(columns=items_cols)
 
     scores_path = d / "scores.csv"
     scores = (pd.read_csv(scores_path).rename(columns={"item_id": "itemid"})

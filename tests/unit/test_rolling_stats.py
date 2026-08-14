@@ -166,6 +166,30 @@ def test_last_clock_is_the_newest_sample_in_the_window():
     assert store.rows[1]["last_clock"] == 2 * 3600
 
 
+def test_zero_cnt_and_max_value_describe_the_window():
+    """These describe the *shape* of the baseline, not its centre: an idle-heavy
+    series has a mean near zero, which is what makes relative change useless."""
+    store = FakeStatsStore()
+    df = _series(1, [0.0, 0.0, 0.0, 0.0, 7.0], start=0)
+
+    update_rolling_stats(store, df, startep=0, endep=4 * 3600)
+
+    row = store.rows[1]
+    assert row["cnt"] == 5
+    assert row["zero_cnt"] == 4
+    assert row["max_value"] == pytest.approx(7.0)
+
+
+def test_zero_cnt_respects_the_window():
+    store = FakeStatsStore()
+    df = _series(1, [0.0, 0.0, 5.0, 6.0], start=0)
+
+    update_rolling_stats(store, df, startep=2 * 3600, endep=3 * 3600)
+
+    assert store.rows[1]["zero_cnt"] == 0
+    assert store.rows[1]["max_value"] == pytest.approx(6.0)
+
+
 def test_item_with_no_samples_in_window_is_deleted():
     """Regression: an item that stops reporting used to keep its last-good row
     forever, so a frozen mean was compared against a baseline that kept sliding

@@ -148,6 +148,29 @@ class DurationConfig(BaseModel):
     floor: float = 0.0
 
 
+class IdleBaselineConfig(BaseModel):
+    """Suppress items whose baseline is zero most of the time.
+
+    A metric that reads zero whenever its resource is idle — VMware guest disk
+    latency, an outstanding-IO depth, a rarely-used counter — has a baseline mean
+    near zero, so *any* activity produces a relative change of tens or hundreds.
+    Relative magnitude cannot discriminate on such a series, and an absolute
+    floor cannot either without knowing the unit.
+
+    The unit-free question that does discriminate: is the current level
+    unprecedented?  When the baseline is idle-dominated, the item is suppressed
+    unless the recent mean exceeds the highest value seen in the whole baseline
+    window.  That keeps the "normally zero, suddenly off the scale" signal — an
+    error counter that spikes to a level it has never reached still fires —
+    while dropping the routine idle→busy transitions.
+
+    `zero_ratio = zero_cnt / cnt` over the trends retention window.
+    """
+    enabled: bool = False
+    max_zero_ratio: float = 0.8   # baseline zero more often than this = idle-dominated
+    floor: float = 0.0            # scale applied when suppressed (0 = hard veto)
+
+
 class MetricCategoryRule(BaseModel):
     """A metric category, matched by fnmatch glob(s) on items.key_ (== item_name
     for CSV sources).  First matching category wins."""
@@ -160,6 +183,7 @@ class MetricCategoryRule(BaseModel):
 class MetricCategoriesConfig(BaseModel):
     default_weight: float = 1.0
     duration: DurationConfig = DurationConfig()
+    idle_baseline: IdleBaselineConfig = IdleBaselineConfig()
     categories: list[MetricCategoryRule] = []
 
 

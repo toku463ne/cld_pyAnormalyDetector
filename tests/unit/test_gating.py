@@ -3,6 +3,7 @@ import pytest
 
 from config.schema import (
     DurationConfig,
+    IdleBaselineConfig,
     MagnitudeConfig,
     MetricCategoriesConfig,
     MetricCategoryRule,
@@ -13,6 +14,7 @@ from features.gating import (
     category_weight,
     classify,
     duration_scale,
+    idle_scale,
     magnitude_scale,
     magnitude_suppressed,
     ramp,
@@ -217,6 +219,83 @@ def _gated(item_id, *, is_anomaly, raw, weight=1.0, mag=1.0, dur=1.0):
             "dur_scale": dur,
         },
     )
+
+
+# ----------------------------------------------------------------------
+# idle baseline
+# ----------------------------------------------------------------------
+
+_IDLE = IdleBaselineConfig(enabled=True, max_zero_ratio=0.8, floor=0.0)
+
+
+def test_idle_disabled_is_passthrough():
+    off = IdleBaselineConfig(enabled=False)
+    assert idle_scale(5.0, zero_cnt=336, cnt=336, max_value=1.0, icfg=off) == 1.0
+
+
+def test_idle_busy_baseline_is_passthrough():
+    """Baseline that is rarely zero is judged on magnitude as usual."""
+    assert idle_scale(5.0, zero_cnt=10, cnt=336, max_value=1.0, icfg=_IDLE) == 1.0
+
+
+def test_idle_baseline_routine_activity_is_suppressed():
+    """The production case: VMware guest disk latency sits at 0 while the guest
+    is idle, so any IO at all is a relative change of tens or hundreds."""
+    # 97% zero, and 3ms has been seen before (max 12ms) → not unprecedented.
+    assert idle_scale(3.0, zero_cnt=326, cnt=336, max_value=12.0, icfg=_IDLE) == 0.0
+
+
+def test_idle_baseline_unprecedented_level_still_fires():
+    """A normally-zero counter spiking beyond anything in the window is exactly
+    the signal this gate must not eat."""
+    assert idle_scale(40.0, zero_cnt=326, cnt=336, max_value=12.0, icfg=_IDLE) == 1.0
+
+
+def test_idle_boundary_at_max_zero_ratio():
+    # exactly at the ratio counts as idle-dominated
+    assert idle_scale(1.0, zero_cnt=80, cnt=100, max_value=5.0, icfg=_IDLE) == 0.0
+    assert idle_scale(1.0, zero_cnt=79, cnt=100, max_value=5.0, icfg=_IDLE) == 1.0
+
+
+def test_idle_fails_open_on_missing_stats():
+    """A trends_stats row written before the columns existed must not veto."""
+    assert idle_scale(5.0, zero_cnt=None, cnt=336, max_value=1.0, icfg=_IDLE) == 1.0
+    assert idle_scale(5.0, zero_cnt=300, cnt=None, max_value=1.0, icfg=_IDLE) == 1.0
+    assert idle_scale(5.0, zero_cnt=300, cnt=336, max_value=None, icfg=_IDLE) == 1.0
+    assert idle_scale(None, zero_cnt=300, cnt=336, max_value=1.0, icfg=_IDLE) == 1.0
+    assert idle_scale(5.0, zero_cnt=0, cnt=0, max_value=1.0, icfg=_IDLE) == 1.0
+
+
+def test_idle_floor_allows_downweight_instead_of_veto():
+    soft = IdleBaselineConfig(enabled=True, max_zero_ratio=0.8, floor=0.3)
+    assert idle_scale(3.0, zero_cnt=326, cnt=336, max_value=12.0, icfg=soft) == 0.3
+
+
+def test_apply_gates_idle_baseline_suppresses_and_is_recorded():
+    cfg = MetricCategoriesConfig(default_weight=1.0, idle_baseline=_IDLE, categories=[])
+    scores = [AnomalyScore(item_id=9, score=1.0, is_anomaly=True, detector_scores={"zscore": 1.0})]
+    item_keys = {9: "vmware.vm.storage.totalwritelatency[url,uuid,scsi0:0]"}
+    history_stats = pd.DataFrame({"itemid": [9], "mean": [8.5], "std": [1.0]})
+    trends_stats = pd.DataFrame({
+        "itemid": [9], "mean": [0.22], "std": [1.0],
+        "cnt": [336], "zero_cnt": [300], "max_value": [40.0],
+    })
+    out = apply_gates(scores, item_keys, history_stats, trends_stats, cfg, min_score=0.7)
+    assert out[0].features["idle_scale"] == 0.0
+    assert out[0].score == pytest.approx(0.0)
+    assert out[0].is_anomaly is False
+
+
+def test_apply_gates_without_idle_columns_is_unaffected():
+    """trends_stats frames from before the migration lack the columns entirely."""
+    cfg = MetricCategoriesConfig(default_weight=1.0, idle_baseline=_IDLE, categories=[])
+    scores = [AnomalyScore(item_id=9, score=1.0, is_anomaly=True, detector_scores={"zscore": 1.0})]
+    item_keys = {9: "whatever"}
+    history_stats = pd.DataFrame({"itemid": [9], "mean": [8.5], "std": [1.0]})
+    trends_stats = pd.DataFrame({"itemid": [9], "mean": [0.22], "std": [1.0]})
+    out = apply_gates(scores, item_keys, history_stats, trends_stats, cfg, min_score=0.7)
+    assert out[0].features["idle_scale"] == 1.0
+    assert out[0].is_anomaly is True
 
 
 def test_magnitude_suppressed_isolates_magnitude():

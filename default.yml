@@ -111,6 +111,18 @@ metric_categories:
     lo_secs: 600             # ≤ this anomalous time (one 10-min spike) → suppressed
     hi_secs: 3600            # ≥ this (sustained ≥ 1h) → full weight
     floor: 0.0
+  idle_baseline:
+    # Metrics that read zero whenever their resource is idle (VMware guest disk
+    # latency, outstanding-IO depth, rarely-used counters) have a baseline mean
+    # near zero, so any activity is a relative change of tens or hundreds and no
+    # relative threshold can discriminate.  When the baseline is zero more than
+    # max_zero_ratio of the window, require the recent level to be
+    # *unprecedented* — above the highest value in the whole baseline window.
+    # A normally-zero error counter spiking off the scale still fires; routine
+    # idle→busy transitions do not.
+    enabled: true
+    max_zero_ratio: 0.8
+    floor: 0.0
   categories:
     # --- container / packet / session metrics: small or non-byte units, so an
     #     absolute byte/percent floor is wrong.  Driven by RELATIVE Δ instead, so
@@ -129,15 +141,26 @@ metric_categories:
       weight: 0.6
       magnitude: {mode: relative, lo: 0.3, hi: 1.0}
     - name: network          # bytes/sec — absolute Δ floor (steady high host → Δ≈0 → ignored)
-      key_patterns: ["net.if.*", "vmware.vm.net.*", "docker.networks.*"]
+      key_patterns: ["net.if.*", "vmware.vm.net.*", "vmware.hv.network.*", "docker.networks.*"]
       weight: 0.2
       magnitude: {mode: absolute, lo: 1048576, hi: 10485760}   # 1 MB → 10 MB
     - name: cpu_load         # load average — absolute Δ in load units (unbounded, ~scales with cores)
       key_patterns: ["system.cpu.load*"]
       weight: 1.0
       magnitude: {mode: absolute, lo: 1, hi: 4}
+    # vmware.vm.cpu.usage is reported in **Hz** (1e8-1e9), not percent, so an
+    # absolute lo/hi in percentage points saturates on every item.  Only the
+    # `.perf` variant is a percentage.  Order matters: `.perf` must win.
+    - name: cpu_perf         # vmware guest CPU as a percentage
+      key_patterns: ["vmware.vm.cpu.usage.perf*"]
+      weight: 1.0
+      magnitude: {mode: absolute, lo: 10, hi: 40}
+    - name: cpu_hz           # vmware guest CPU in Hz — relative Δ
+      key_patterns: ["vmware.vm.cpu.*"]
+      weight: 1.0
+      magnitude: {mode: relative, lo: 0.5, hi: 1.5}
     - name: cpu              # percent — absolute Δ in percentage points
-      key_patterns: ["system.cpu.util*", "vmware.vm.cpu.*"]
+      key_patterns: ["system.cpu.util*"]
       weight: 1.0
       magnitude: {mode: absolute, lo: 10, hi: 40}
     - name: memory_pct       # percent — absolute Δ in percentage points
@@ -148,8 +171,13 @@ metric_categories:
       key_patterns: ["vm.memory.size*", "vm.memory.free*", "vm.memory.used*", "vm.memory.buffers*", "proc.mem*", "docker.container_stats.memory.usage*"]
       weight: 0.7
       magnitude: {mode: relative, lo: 0.1, hi: 0.5}
+    # Disk/storage IO.  The vmware.* patterns are spelled out because fnmatch
+    # anchors at the start: `vfs.dev.*` does NOT match
+    # `vmware.vm.vfs.dev.write[...]`, so those keys used to fall through to the
+    # catch-all and be driven by relative Δ against a near-zero baseline.
     - name: disk             # bytes/ops — relative Δ
-      key_patterns: ["vfs.fs.*", "vfs.dev.*", "truenas.dataset.*"]
+      key_patterns: ["vfs.fs.*", "vfs.dev.*", "truenas.dataset.*", "truenas.zpool.*",
+                     "vmware.vm.vfs.dev.*", "vmware.vm.storage.*", "vmware.hv.datastore.*"]
       weight: 0.5
       magnitude: {mode: relative, lo: 0.05, hi: 0.3}
     # Catch-all: global relative-change floor for every uncategorised metric
@@ -214,6 +242,24 @@ anomaly_filters:
     key_pattern: "net.if.*"
     units: "bps"
     min_abs_diff: 1000000
+  # Low-count / low-rate metrics.  These pass every relative test (going from 1
+  # to 3 sshd sessions is +200%) but the absolute move is not worth waking
+  # anybody for.  Floors are in the metric's own unit.
+  - name: proc-count-noise           # process counts: ignore < 5 processes
+    key_pattern: "proc.num*"
+    min_abs_diff: 5
+  - name: mysql-rate-noise           # mysql per-second rates: ignore < 1/s
+    key_pattern: "mysql.com_*"
+    min_abs_diff: 1
+  - name: unbound-histogram-noise    # per-bucket query counts: ignore < 100 queries
+    key_pattern: "unbound.histogram*"
+    min_abs_diff: 100
+  - name: call-stats-noise           # call counters: ignore < 10 calls
+    key_pattern: "call.stats.*"
+    min_abs_diff: 10
+  - name: mssql-cache-object-noise   # cache object counts: ignore < 10 objects
+    key_pattern: "mssql.cache_object*"
+    min_abs_diff: 10
   - name: pct-noise-catchall         # any percent metric: ignore < 3 point change
     units: "%"
     min_abs_diff: 3
