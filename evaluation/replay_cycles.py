@@ -239,8 +239,15 @@ def main() -> int:
 
     ds_window = cfg.history_retention * cfg.history_interval
     baseline = replay(args.dataset, cfg, default_age, recency=False)
-    print(f"\nrecency OFF (every cycle re-reports): "
-          f"{len(baseline['recorded'])} distinct item(s) would be recorded")
+    # Dedup alone already delivers "record once, keep for days".  Printing its
+    # per-cycle shape is what says whether the recency gate is buying anything
+    # beyond it -- in particular whether turning it off means a large backlog on
+    # the first cycle, or just a few more incidents spread over the span.
+    print("\n=== recency OFF — dedup only (record once, retain)")
+    print(f"{'cycle':>13} {'scored':>7} {'new':>5} {'on dashboard':>13}")
+    for endep, flagged, new, retained in baseline["cycles"]:
+        print(f"{_fmt(endep):>13} {flagged:>7} {new:>5} {retained:>13}")
+    print(f"  recorded: {len(baseline['recorded'])}")
 
     for age in ages:
         res = replay(args.dataset, cfg, age, recency=True)
