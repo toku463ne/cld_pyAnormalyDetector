@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from config.schema import (
+    RecurringPeakConfig,
     DurationConfig,
     IdleBaselineConfig,
     MagnitudeConfig,
@@ -11,6 +12,7 @@ from config.schema import (
 )
 from detectors.base import AnomalyScore
 from features.gating import (
+    recurring_peak_scale,
     apply_gates,
     category_weight,
     classify,
@@ -409,3 +411,73 @@ def test_apply_gates_missing_intra_std_keeps_old_behaviour():
     )
     assert out[0].features["baseline_sigma"] == 1.0
     assert out[0].features["dur_scale"] == 1.0
+
+
+# ----------------------------------------------------------------------
+# recurring peak: a level this item reaches routinely anyway
+# ----------------------------------------------------------------------
+
+def _rp(**kw):
+    return RecurringPeakConfig(**{"enabled": True, "min_episodes": 9, **kw})
+
+
+def test_recurring_peak_vetoes_a_habitual_peaker_at_a_familiar_level():
+    assert recurring_peak_scale(30.0, 11.0, 34.0, 25, _rp()) == 0.0
+
+
+def test_recurring_peak_keeps_an_unprecedented_level():
+    """Both conditions are required: peaking habitually is not on its own a
+    reason to stay quiet."""
+    assert recurring_peak_scale(50.0, 11.0, 34.0, 25, _rp()) == 1.0
+
+
+def test_recurring_peak_leaves_normally_flat_items_alone():
+    """The precondition is what makes the rule safe -- without it, the veto also
+    removed real anomalies, which are usually a normal level at an abnormal
+    time rather than an unprecedented level."""
+    assert recurring_peak_scale(30.0, 11.0, 34.0, 1, _rp()) == 1.0
+
+
+def test_recurring_peak_never_touches_a_collapse():
+    """A drop is trivially below local_peak; vetoing it would mute exactly the
+    'the service stopped' signals."""
+    assert recurring_peak_scale(0.0, 11.0, 34.0, 25, _rp()) == 1.0
+
+
+@pytest.mark.parametrize("local_peak,episodes", [
+    (None, 25), (34.0, None), (float("nan"), 25), (34.0, float("nan")),
+])
+def test_recurring_peak_fails_open_without_evidence(local_peak, episodes):
+    """trends_stats rows written before the columns existed must not veto."""
+    assert recurring_peak_scale(30.0, 11.0, local_peak, episodes, _rp()) == 1.0
+
+
+def test_recurring_peak_disabled_is_passthrough():
+    assert recurring_peak_scale(30.0, 11.0, 34.0, 25, RecurringPeakConfig(enabled=False)) == 1.0
+
+
+def test_apply_gates_records_the_peak_multiplier():
+    cfg = MetricCategoriesConfig(default_weight=1.0, recurring_peak=_rp(), categories=[])
+    scores = [AnomalyScore(item_id=7, score=1.0, is_anomaly=True, detector_scores={"zscore": 1.0})]
+    out = apply_gates(
+        scores, {7: "k"},
+        pd.DataFrame({"itemid": [7], "mean": [30.0]}),
+        pd.DataFrame({"itemid": [7], "mean": [11.0], "std": [3.0],
+                      "local_peak": [34.0], "peak_episodes": [25]}),
+        cfg, min_score=0.5,
+    )
+    assert out[0].features["peak_scale"] == 0.0
+    assert out[0].is_anomaly is False
+
+
+def test_peak_vetoed_items_are_not_rescue_candidates():
+    """The peak gate is a veto, not a severity scaling: clustering must not pull
+    a vetoed item back in."""
+    s = AnomalyScore(
+        item_id=8, score=0.0, is_anomaly=False, detector_scores={"zscore": 1.0},
+        features={"raw_score": 1.0, "gate_weight": 1.0, "mag_scale": 0.5,
+                  "dur_scale": 1.0, "idle_scale": 1.0, "peak_scale": 0.0},
+    )
+    assert magnitude_suppressed([s], min_score=0.7) == []
+    s.features["peak_scale"] = 1.0
+    assert [x.item_id for x in magnitude_suppressed([s], min_score=0.7)] == [8]

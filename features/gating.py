@@ -4,9 +4,9 @@ Metric-category gating
 Pure, DB-free functions that adjust ensemble scores by:
 
   effective_score = raw_score × category_weight × magnitude_scale
-                              × duration_scale × idle_scale
+                              × duration_scale × idle_scale × recurring_peak_scale
 
-All four multipliers are in [floor, 1].  The driving quantity for magnitude is
+All five multipliers are in [floor, 1].  The driving quantity for magnitude is
 always the change from baseline Δ = |recent_mean - trend_mean|, never the raw
 current value, so a host running steadily at a high level (Δ≈0) is not flagged.
 
@@ -26,6 +26,7 @@ from config.schema import (
     MagnitudeConfig,
     MetricCategoriesConfig,
     MetricCategoryRule,
+    RecurringPeakConfig,
 )
 from detectors.base import AnomalyScore
 
@@ -105,6 +106,48 @@ def idle_scale(
     return icfg.floor
 
 
+def recurring_peak_scale(
+    recent_mean: float | None,
+    trend_mean: float | None,
+    local_peak: float | None,
+    peak_episodes: float | None,
+    rcfg: RecurringPeakConfig,
+) -> float:
+    """Suppress a level that this item reaches routinely anyway.
+
+    Two conditions, both required:
+
+    1. **The item peaks habitually** — `peak_episodes >= min_episodes`.  This is
+       a property of the baseline's shape and says nothing about the current
+       level, which is what keeps the rule off metrics that are normally flat.
+    2. **The current level is not new** — `recent_mean <= local_peak`, i.e. the
+       item has sustained at least this much before.
+
+    Upward excursions only: a drop is trivially below `local_peak`, and vetoing
+    those would suppress the "it stopped" signals.  See `RecurringPeakConfig` for
+    why condition 1 is not optional.
+
+    Fails open (1.0) when disabled, when the excursion is downward, or when any
+    of the evidence is missing — a `trends_stats` row written before these
+    columns existed must not silently veto everything.
+    """
+    if not rcfg.enabled:
+        return 1.0
+    if recent_mean is None or trend_mean is None:
+        return 1.0
+    if local_peak is None or peak_episodes is None:
+        return 1.0
+    if pd.isna(local_peak) or pd.isna(peak_episodes):
+        return 1.0
+    if float(recent_mean) <= float(trend_mean):
+        return 1.0  # downward excursion; local_peak says nothing about it
+    if float(peak_episodes) < rcfg.min_episodes:
+        return 1.0  # not a habitual peaker, so "seen before" is not evidence
+    if float(recent_mean) > float(local_peak):
+        return 1.0  # genuinely unprecedented
+    return rcfg.floor
+
+
 def duration_scale(
     series: pd.Series | None,
     trend_mean: float,
@@ -155,19 +198,21 @@ def apply_gates(
 ) -> list[AnomalyScore]:
     """
     Recompute each score's `score` (= effective score) and `is_anomaly` flag by
-    applying category weight, magnitude scale, duration scale and the
-    idle-baseline gate.
+    applying category weight, magnitude scale, duration scale, the idle-baseline
+    gate and the recurring-peak gate.
 
     The per-detector breakdown (`detector_scores`) is preserved unchanged; the
-    raw ensemble score and the four gate multipliers are recorded in `features`
-    (raw_score, gate_weight, mag_scale, dur_scale, idle_scale, delta) for
-    interpretability.
+    raw ensemble score and the five gate multipliers are recorded in `features`
+    (raw_score, gate_weight, mag_scale, dur_scale, idle_scale, peak_scale, delta)
+    for interpretability.
     """
     h_mean = _series(history_stats, "mean")
     t_mean = _series(trends_stats, "mean")
     t_std = _series(trends_stats, "std")
     t_intra_std = _series(trends_stats, "intra_std")
     t_zero_cnt = _series(trends_stats, "zero_cnt")
+    t_local_peak = _series(trends_stats, "local_peak")
+    t_peak_eps = _series(trends_stats, "peak_episodes")
     t_cnt = _series(trends_stats, "cnt")
     t_max = _series(trends_stats, "max_value")
 
@@ -215,7 +260,15 @@ def apply_gates(
             cfg.idle_baseline,
         )
 
-        effective = s.score * weight * mag * dur * idle
+        peak = recurring_peak_scale(
+            recent,
+            tmean,
+            t_local_peak.get(s.item_id),
+            t_peak_eps.get(s.item_id),
+            cfg.recurring_peak,
+        )
+
+        effective = s.score * weight * mag * dur * idle * peak
         result.append(
             AnomalyScore(
                 item_id=s.item_id,
@@ -229,6 +282,7 @@ def apply_gates(
                     "mag_scale": mag,
                     "dur_scale": dur,
                     "idle_scale": idle,
+                    "peak_scale": peak,
                     "delta": delta,
                     "baseline_sigma": sigma,
                     "sample_secs": interval_by_item.get(s.item_id, history_interval),
@@ -238,7 +292,7 @@ def apply_gates(
 
     n_anom = sum(1 for s in result if s.is_anomaly)
     logger.info(
-        "gating: %d scores → %d anomalies after category/magnitude/duration/idle",
+        "gating: %d scores → %d anomalies after category/magnitude/duration/idle/peak",
         len(result),
         n_anom,
     )
@@ -261,6 +315,11 @@ def magnitude_suppressed(
     duration alone (raw_score * gate_weight * dur_scale >= min_score) but was
     pushed under by magnitude (mag_scale < 1).  Reads the multipliers recorded in
     `features` by apply_gates.
+
+    The idle-baseline and recurring-peak gates are *vetoes*, not severity
+    scalings: they assert the movement is not interesting at all, so an item
+    either of them held back is never a rescue candidate no matter what its
+    cluster does.  Only magnitude is a matter of degree.
     """
     out: list[AnomalyScore] = []
     for s in scores:
@@ -269,6 +328,8 @@ def magnitude_suppressed(
         f = s.features
         raw = f.get("raw_score")
         if raw is None or raw < min_score:
+            continue
+        if f.get("idle_scale", 1.0) < 1.0 or f.get("peak_scale", 1.0) < 1.0:
             continue
         mag = f.get("mag_scale", 1.0)
         weight = f.get("gate_weight", 1.0)

@@ -34,7 +34,7 @@ from detectors.changepoint import ChangepointDetector
 from detectors.ensemble import EnsembleDetector
 from detectors.seasonal import SeasonalDetector
 from detectors.zscore import ZScoreDetector
-from features.baseline import intra_std_from_range
+from features.baseline import baseline_sigma, intra_std_from_range, recurring_peak_stats
 from features.gating import apply_gates
 from ingestion.base import ItemDetail
 from pipeline.filters import apply_anomaly_filters
@@ -44,6 +44,14 @@ TARBALL = ROOT / "datasets" / "check_20260814_1529.tar.gz"
 
 N_FLAGGED_AT_EXPORT = 31
 MAX_AFTER_FIX = 14
+MAX_AFTER_PEAK_GATE = 8
+
+# Items a reviewer pointed at as obviously fine: both peak habitually and both
+# are at a level they have reached many times before.
+HABITUAL_PEAKERS = [
+    (211489, 'sug-cdrmediator02'),   # business-hours call counter
+    (232800, '564d0e45-9366-0659-2ac3-65a6e692de8c'),  # VMware guest CPU
+]
 
 # Item classes the reviewer called noise; each is a burst-shaped metric whose
 # hourly average barely moves.  Named by (host, key prefix).
@@ -76,9 +84,11 @@ def export():
         }
 
 
-def _replay(export, *, with_intra_std: bool) -> dict[int, object]:
+def _replay(export, *, with_intra_std: bool, peak_gate: bool = True) -> dict[int, object]:
     """Score the export exactly as the hourly pipeline would."""
     cfg = load_config(str(ROOT / "default.yml"))
+    if not peak_gate:
+        cfg.metric_categories.recurring_peak.enabled = False
     trends, history, endep = export["trends"], export["history"], export["endep"]
 
     grp = trends.groupby("itemid")["value_avg"]
@@ -90,6 +100,21 @@ def _replay(export, *, with_intra_std: bool) -> dict[int, object]:
         trends_stats["intra_std"] = trends_stats["itemid"].map(
             intra_std_from_range(trends, ("value_min", "value_max"), cfg.trends_range_to_sigma)
         )
+    rp = cfg.metric_categories.recurring_peak
+    sigmas = pd.Series(
+        [
+            baseline_sigma(sd, trends_stats["intra_std"].iloc[i] if with_intra_std else None)
+            for i, sd in enumerate(trends_stats["std"])
+        ],
+        index=trends_stats["itemid"],
+    )
+    peaks = recurring_peak_stats(
+        trends, "value_max", trends_stats.set_index("itemid")["mean"], sigmas,
+        cfg.history_retention * cfg.history_interval, rp.k_sigma,
+        endep - rp.exclude_recent_secs,
+    )
+    trends_stats["local_peak"] = trends_stats["itemid"].map(peaks["local_peak"])
+    trends_stats["peak_episodes"] = trends_stats["itemid"].map(peaks["peak_episodes"])
 
     window = history[history["clock"] >= endep - cfg.history_retention * cfg.history_interval]
     hgrp = window.groupby("itemid")["value"]
@@ -186,3 +211,41 @@ def test_changepoint_stops_being_a_constant(export):
         history_df=window, trends_stats=trends_stats, reference_interval=cfg.history_interval
     )
     assert len(scores) < N_FLAGGED_AT_EXPORT
+
+
+# ---------------------------------------------------------------------------
+# Recurring-peak gate (DETECTION.md §8.8)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("item_id,host", HABITUAL_PEAKERS)
+def test_habitual_peakers_at_a_familiar_level_are_dropped(export, item_id, host):
+    flagged, details = _replay(export, with_intra_std=True)
+    assert item_id not in flagged, details.get(item_id)
+
+
+def test_peak_gate_shrinks_the_cycle_further(export):
+    flagged, _ = _replay(export, with_intra_std=True)
+    assert len(flagged) <= MAX_AFTER_PEAK_GATE, sorted(flagged)
+
+
+def test_peak_gate_keeps_genuinely_unprecedented_levels(export):
+    """The IPX012 unbound counters are above every past sustained peak, and the
+    IMTDB123 mssql step is not a habitual peaker.  Both must survive."""
+    flagged, details = _replay(export, with_intra_std=True)
+    hosts = {details[i].host_name for i in flagged}
+    assert "IPX012" in hosts
+    assert "IMTDB123" in hosts
+
+
+def test_peak_gate_is_what_drops_them(export):
+    """Turning off only this gate brings them back, so nothing else is doing the
+    work by accident."""
+    assert load_config(str(ROOT / "default.yml")).metric_categories.recurring_peak.enabled
+
+    with_gate, _ = _replay(export, with_intra_std=True)
+    without_gate, _ = _replay(export, with_intra_std=True, peak_gate=False)
+
+    assert len(with_gate) < len(without_gate)
+    for item_id, _host in HABITUAL_PEAKERS:
+        assert item_id in without_gate
+        assert item_id not in with_gate

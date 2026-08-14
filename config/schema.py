@@ -171,6 +171,47 @@ class IdleBaselineConfig(BaseModel):
     floor: float = 0.0            # scale applied when suppressed (0 = hard veto)
 
 
+class RecurringPeakConfig(BaseModel):
+    """Suppress a level this item reaches routinely anyway.
+
+    Some metrics peak as a matter of course — a call counter that climbs every
+    business morning, a VM whose CPU spikes on every batch job.  When one of them
+    is flagged, the level it has reached is usually one it has reached many times
+    before, and a reviewer rejects it on sight.
+
+    The rule the old implementation used for this (`detect3`, see
+    `org/pyAnomalyDetector/data_processing/detector.py::_calc_local_peak`) was
+    "drop the item unless the current level exceeds every past sustained peak".
+    Applied unconditionally that is far too blunt: measured against 19 queues of
+    human labels it removed 25 of the 36 confirmed anomalies, because a real
+    anomaly is usually not an unprecedented *level* — it is a normal level at an
+    abnormal time.
+
+    What makes it safe is a precondition on the baseline's **shape**, which does
+    not involve the current level at all: apply the veto only to items that peak
+    habitually, `peak_episodes >= min_episodes`.  On the same labels the
+    confirmed anomalies sit at a median of 0 episodes and a maximum of 8 (34 of
+    36 are at 0 or 1), while the habitually-peaking items reviewers rejected run
+    9-72, so the precondition separates them without touching recall.
+
+    Upward excursions only.  A collapse is always below `local_peak`, so a
+    symmetric rule would suppress exactly the "the service stopped" signals that
+    matter most; a trough counterpart would need its own evidence.
+
+    `exclude_recent_secs` keeps the tail of the baseline window out of the
+    precedent, because an excursion still in progress would otherwise be part of
+    what it is judged against and clear its own veto.  It defaults to one day,
+    the daily batch's cadence, so anything that started since the previous run is
+    excluded.  A shift older than that is genuinely part of the baseline by then
+    — that is the sliding window working as intended.
+    """
+    enabled: bool = False
+    min_episodes: int = 9        # separate excursions in the baseline = "peaks habitually"
+    k_sigma: float = 2.0         # sigma multiple a bucket max must clear to open an episode
+    exclude_recent_secs: int = 86400  # tail kept out of the precedent (see below)
+    floor: float = 0.0           # scale applied when suppressed (0 = hard veto)
+
+
 class MetricCategoryRule(BaseModel):
     """A metric category, matched by fnmatch glob(s) on items.key_ (== item_name
     for CSV sources).  First matching category wins."""
@@ -184,6 +225,7 @@ class MetricCategoriesConfig(BaseModel):
     default_weight: float = 1.0
     duration: DurationConfig = DurationConfig()
     idle_baseline: IdleBaselineConfig = IdleBaselineConfig()
+    recurring_peak: RecurringPeakConfig = RecurringPeakConfig()
     categories: list[MetricCategoryRule] = []
 
 

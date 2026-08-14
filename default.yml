@@ -144,6 +144,38 @@ metric_categories:
     enabled: true
     max_zero_ratio: 0.8
     floor: 0.0
+  recurring_peak:
+    # Some metrics peak as a matter of course — a call counter that climbs every
+    # business morning, a VM whose CPU spikes on every batch job.  When one is
+    # flagged, the level it reached is one it has reached many times before, and
+    # a reviewer rejects it on sight.
+    #
+    # The old implementation's detect3 vetoed any item whose level was not
+    # unprecedented.  Applied unconditionally that is far too blunt: measured
+    # against the 19 human-labelled queues it removed 25 of 36 confirmed
+    # anomalies, because a real anomaly is usually not an unprecedented *level* —
+    # it is a normal level at an abnormal time.
+    #
+    # What makes it safe is `min_episodes`, a precondition on the baseline's
+    # SHAPE that never looks at the current level: only items that peak
+    # habitually are eligible.  On those same labels the confirmed anomalies sit
+    # at a median of 0 episodes and a maximum of 8 (34 of 36 are at 0 or 1),
+    # while the habitual peakers reviewers rejected run 9-72 — so the veto lands
+    # on one group and not the other.  At min_episodes 9: TP 36 -> 36, no recall
+    # cost at all, and the rejected cycle goes 12 -> 7.
+    #
+    # Needs `local_peak` / `peak_episodes` from the daily batch; fails open until
+    # anomdec-update-stats has run once.  Upward excursions only — a collapse is
+    # always below local_peak, and vetoing those would mute "the service stopped".
+    #
+    # exclude_recent_secs keeps the tail of the baseline out of the precedent: an
+    # excursion still in progress would otherwise raise local_peak to cover
+    # itself and clear its own veto.  One day = the daily batch cadence.
+    enabled: true
+    min_episodes: 9           # baseline excursions that make an item a habitual peaker
+    k_sigma: 2.0              # sigma multiple a bucket max must clear to open an episode
+    exclude_recent_secs: 86400
+    floor: 0.0
   categories:
     # --- container / packet / session metrics: small or non-byte units, so an
     #     absolute byte/percent floor is wrong.  Driven by RELATIVE Δ instead, so

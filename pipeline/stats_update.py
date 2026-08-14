@@ -74,6 +74,12 @@ class StatsUpdatePipeline:
                 expected_item_ids=batch,
                 range_cols=("value_min", "value_max"),
                 range_to_sigma=ds_cfg.trends_range_to_sigma,
+                # The peak window matches the detection window, so "has it ever
+                # sustained this level" is asked on the same time scale the
+                # recent mean is measured over.
+                peak_window_secs=ds_cfg.history_retention * ds_cfg.history_interval,
+                peak_k_sigma=ds_cfg.metric_categories.recurring_peak.k_sigma,
+                peak_exclude_secs=ds_cfg.metric_categories.recurring_peak.exclude_recent_secs,
             )
             if stale:
                 hour_store.delete(stale)

@@ -307,3 +307,59 @@ def test_intra_std_slides_with_the_window():
         range_cols=("value_min", "value_max"), range_to_sigma=4.0,
     )
     assert store.rows[1]["intra_std"] < wide / 10
+
+
+# ----------------------------------------------------------------------
+# local_peak / peak_episodes
+# ----------------------------------------------------------------------
+
+def test_peak_columns_written_from_the_bucket_maxima():
+    store = FakeStatsStore()
+    df = _trends_window(1, [1.0] * 8, [0.0] * 8, [1.0, 1.0, 9.0, 9.0, 1.0, 1.0, 9.0, 1.0])
+    update_rolling_stats(
+        store=store, data_df=df, startep=0, endep=10**9,
+        range_cols=("value_min", "value_max"), range_to_sigma=4.0,
+        peak_window_secs=3 * 3600, peak_k_sigma=2.0, peak_exclude_secs=0,
+    )
+    row = store.rows[1]
+    assert row["peak_episodes"] == 2       # two separate excursions, not three buckets
+    assert row["local_peak"] > 0
+
+
+def test_peak_columns_null_without_range_or_window():
+    store = FakeStatsStore()
+    update_rolling_stats(
+        store=store, data_df=_series(1, [1.0, 2.0, 3.0], start=0), startep=0, endep=10**9,
+    )
+    assert store.rows[1]["local_peak"] is None
+    assert store.rows[1]["peak_episodes"] is None
+
+    store2 = FakeStatsStore()
+    df = _trends_window(1, [1.0] * 4, [0.0] * 4, [9.0] * 4)
+    update_rolling_stats(
+        store=store2, data_df=df, startep=0, endep=10**9,
+        range_cols=("value_min", "value_max"), peak_window_secs=0,
+    )
+    assert store2.rows[1]["local_peak"] is None
+
+
+def test_peak_columns_exclude_the_live_excursion():
+    """peak_exclude_secs keeps the tail out, so an ongoing excursion is not part
+    of the precedent it will be judged against."""
+    endep = 20 * 3600
+    df = _trends_window(1, [1.0] * 20, [0.0] * 20, [1.0] * 16 + [80.0] * 4)
+    store = FakeStatsStore()
+    update_rolling_stats(
+        store=store, data_df=df, startep=0, endep=endep,
+        range_cols=("value_min", "value_max"),
+        peak_window_secs=3 * 3600, peak_k_sigma=2.0, peak_exclude_secs=0,
+    )
+    included = store.rows[1]["local_peak"]
+
+    store2 = FakeStatsStore()
+    update_rolling_stats(
+        store=store2, data_df=df, startep=0, endep=endep,
+        range_cols=("value_min", "value_max"),
+        peak_window_secs=3 * 3600, peak_k_sigma=2.0, peak_exclude_secs=5 * 3600,
+    )
+    assert store2.rows[1]["local_peak"] < included / 10

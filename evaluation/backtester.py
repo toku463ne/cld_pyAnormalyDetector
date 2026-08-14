@@ -41,7 +41,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.ensemble import EnsembleDetector
 from clustering.dbscan import cluster_anomalies
 from features.gating import apply_gates, category_weight, classify
-from features.baseline import intra_std_from_range
+from features.baseline import baseline_sigma, intra_std_from_range, recurring_peak_stats
 from evaluation.metrics import (
     compute_clustering_metrics,
     compute_metrics,
@@ -121,6 +121,21 @@ def run_offline_eval(
             ds_config.trends_range_to_sigma,
         )
     )
+    _sigmas = pd.Series(
+        [baseline_sigma(s, i) for s, i in zip(trends_stats["std"], trends_stats["intra_std"])],
+        index=trends_stats["itemid"],
+    )
+    _peaks = recurring_peak_stats(
+        trends_df,
+        "value_max",
+        trends_stats.set_index("itemid")["mean"],
+        _sigmas,
+        ds_config.history_retention * ds_config.history_interval,
+        ds_config.metric_categories.recurring_peak.k_sigma,
+        endep - ds_config.metric_categories.recurring_peak.exclude_recent_secs,
+    )
+    trends_stats["local_peak"] = trends_stats["itemid"].map(_peaks["local_peak"])
+    trends_stats["peak_episodes"] = trends_stats["itemid"].map(_peaks["peak_episodes"])
 
     hist_startep = endep - ds_config.history_retention * ds_config.history_interval
     history_df = src.get_history(hist_startep, endep, item_ids)

@@ -37,7 +37,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from features.baseline import intra_std_from_range
+from features.baseline import baseline_sigma, intra_std_from_range, recurring_peak_stats
 from store.stats import _RollingStatsStore
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,9 @@ def update_rolling_stats(
     expected_item_ids: list[int] | None = None,
     range_cols: tuple[str, str] | None = None,
     range_to_sigma: float = 4.0,
+    peak_window_secs: int = 0,
+    peak_k_sigma: float = 2.0,
+    peak_exclude_secs: int = 86400,
 ) -> list[int]:
     """
     Recompute the window stats for every item present in data_df.
@@ -75,6 +78,13 @@ def update_rolling_stats(
                         `intra_std`; None leaves it NULL (history rows are raw
                         samples, so they have no within-bucket spread).
     range_to_sigma    : divisor turning a mean range into a sigma estimate.
+    peak_window_secs  : window over which a peak counts as "sustained", for
+                        `local_peak`.  0 disables `local_peak`/`peak_episodes`.
+    peak_k_sigma      : sigma multiple a bucket maximum must clear to open a
+                        peak episode.
+    peak_exclude_secs : tail of the window kept out of `local_peak` /
+                        `peak_episodes`, so an excursion still in progress is not
+                        part of the precedent it will be judged against.
 
     Returns the item ids whose stats rows were deleted.
     """
@@ -100,7 +110,10 @@ def update_rolling_stats(
         store.delete(stale)
 
     if not window.empty:
-        _upsert_window(store, window, value_col, batch_size, range_cols, range_to_sigma)
+        _upsert_window(
+            store, window, value_col, batch_size, range_cols, range_to_sigma,
+            peak_window_secs, peak_k_sigma, endep - peak_exclude_secs,
+        )
 
     return stale
 
@@ -112,6 +125,9 @@ def _upsert_window(
     batch_size: int,
     range_cols: tuple[str, str] | None = None,
     range_to_sigma: float = 4.0,
+    peak_window_secs: int = 0,
+    peak_k_sigma: float = 2.0,
+    peak_max_clock: int | None = None,
 ) -> None:
     agg = (
         df.groupby("itemid")
@@ -146,19 +162,43 @@ def _upsert_window(
     agg["last_clock"] = agg["last_clock"].astype(int)
     agg["zero_cnt"] = agg["zero_cnt"].astype(int)
 
-    if range_cols and all(c in df.columns for c in range_cols):
+    has_range = bool(range_cols) and all(c in df.columns for c in range_cols)
+    if has_range:
         agg["intra_std"] = (
             agg["itemid"].map(intra_std_from_range(df, range_cols, range_to_sigma)).astype(float)
         )
     else:
         agg["intra_std"] = np.nan
-    # NULL, not NaN: consumers treat a missing intra_std as "unknown" and fall
-    # back to `std`, and NaN would survive the round-trip as a float.
-    agg["intra_std"] = agg["intra_std"].astype(object).where(agg["intra_std"].notna(), None)
+
+    # local_peak / peak_episodes describe how *habitually* the item peaks and how
+    # high those peaks sustain -- the evidence the recurring-peak gate needs to
+    # decide whether "this level is not unprecedented" is a reason to stay quiet.
+    # See features/gating.py::recurring_peak_scale.
+    if has_range and peak_window_secs > 0:
+        indexed = agg.set_index("itemid")
+        sigmas = pd.Series(
+            [baseline_sigma(s, i) for s, i in zip(indexed["std"], indexed["intra_std"])],
+            index=indexed.index,
+        )
+        peaks = recurring_peak_stats(
+            df, range_cols[1], indexed["mean"], sigmas, peak_window_secs, peak_k_sigma,
+            peak_max_clock,
+        )
+        agg["local_peak"] = agg["itemid"].map(peaks["local_peak"]).astype(float)
+        agg["peak_episodes"] = agg["itemid"].map(peaks["peak_episodes"])
+    else:
+        agg["local_peak"] = np.nan
+        agg["peak_episodes"] = np.nan
+
+    # NULL, not NaN: consumers treat these as "unknown" and fail open to the
+    # pre-existing behaviour, and NaN would survive the round-trip as a float.
+    for col in ("intra_std", "local_peak", "peak_episodes"):
+        agg[col] = agg[col].astype(object).where(agg[col].notna(), None)
 
     cols = [
         "itemid", "sum", "sqr_sum", "cnt", "mean", "std",
         "last_clock", "zero_cnt", "max_value", "intra_std",
+        "local_peak", "peak_episodes",
     ]
     for i in range(0, len(agg), batch_size):
         store.upsert(agg.iloc[i : i + batch_size][cols])

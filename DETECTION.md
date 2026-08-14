@@ -56,7 +56,7 @@ Tables are named `{ds_name}_{suffix}` (`store/base.py`).
 |---|---|---|
 | `{ds}_history` | `itemid, clock, value` | hourly (cache for changepoint/clustering) |
 | `{ds}_history_stats` | `itemid, sum, sqr_sum, cnt, mean, std` | hourly |
-| `{ds}_trends_stats` | `itemid, sum, sqr_sum, cnt, mean, std, intra_std` | daily |
+| `{ds}_trends_stats` | `itemid, sum, sqr_sum, cnt, mean, std, intra_std, local_peak, peak_episodes` | daily |
 | `{ds}_hour_stats` | `itemid, hour_of_day, mean, std, cnt` | daily |
 | `{ds}_history_updates` | `id=1, startep, endep` | hourly (watermark only) |
 | `{ds}_trends_updates` | `id=1, startep, endep` | daily (watermark only) |
@@ -113,6 +113,24 @@ sigma = hypot(trends_stats.std, intra_std)
 and **fail open to `std`** when `intra_std` is NULL: rows written before the
 column existed, and `history_stats` rows, which are raw samples and have no
 within-bucket spread by construction. Only trends carry it.
+
+**`local_peak` / `peak_episodes` — the shape of the item's peaks.** Written by
+the same daily pass, read by the recurring-peak gate (§2.6):
+
+```
+local_peak    = max over sliding `history_retention x history_interval` windows
+                of the mean of value_max        # highest level ever *sustained*
+peak_episodes = number of contiguous runs of value_max >= mean + k_sigma·sigma
+```
+
+Both are computed over `clock < endep - exclude_recent_secs` (default one day,
+the batch cadence). The cutoff is not cosmetic: these two numbers are the
+*precedent* an excursion is judged against, so an excursion still in progress
+must not contribute to them. Left in, it raises `local_peak` to cover itself —
+on the 15:29 export one item's reference went 4.4 → 20.1 and it silently cleared
+its own veto — and adds the episode that can tip a normally-flat item over
+`min_episodes`. Windows shorter than the full span are dropped too, since a high
+first bucket would otherwise read as a sustained level on its own.
 
 The critical property is that samples ageing out of the back of the window stop
 contributing: that is what lets a step change be absorbed into the baseline
@@ -270,7 +288,7 @@ a 2-of-3 cascade.
 Defaults (`default.yml`): weights zscore 0.3 / changepoint 0.3 / seasonal 0.4,
 `min_score: 0.7`, `require_any: 2`.
 
-### 2.6 Gating — category, magnitude, duration, idle baseline
+### 2.6 Gating — category, magnitude, duration, idle baseline, recurring peak
 
 `features/gating.py`. Pure functions, used identically by the pipeline and the
 backtester so offline evaluation matches runtime.
@@ -278,11 +296,13 @@ backtester so offline evaluation matches runtime.
 ```
 effective_score = raw_ensemble_score × category_weight × magnitude_scale
                                      × duration_scale × idle_scale
+                                     × recurring_peak_scale
 is_anomaly      = effective_score >= ensemble.min_score
 ```
 
-The raw score and all four multipliers are preserved in `features`
-(`raw_score`, `gate_weight`, `mag_scale`, `dur_scale`, `idle_scale`, `delta`).
+The raw score and all five multipliers are preserved in `features`
+(`raw_score`, `gate_weight`, `mag_scale`, `dur_scale`, `idle_scale`,
+`peak_scale`, `delta`).
 
 **Ramp helper** — `ramp(x, lo, hi)`: 0 at/below `lo`, 1 at/above `hi`, linear
 between; degenerates to a hard threshold at `hi` when `hi <= lo`.
@@ -328,6 +348,38 @@ every count by `configured / real`: 10x on a Zabbix collecting at 60 s under the
 default 600, which made the gate a no-op (§8.7). The measured value is recorded
 in `features.sample_secs`, the sigma in `features.baseline_sigma`.
 
+**Recurring peak** — some metrics peak as a matter of course: a call counter
+that climbs every business morning, a VM whose CPU spikes on every batch job.
+When one is flagged, the level it reached is one it has reached many times
+before, and a reviewer rejects it on sight.
+
+The old implementation vetoed this with `detect3`: drop the item unless the
+current level exceeds every past sustained peak. Ported verbatim that is far too
+blunt — replayed against the 19 human-labelled queues it removed **25 of the 36
+confirmed anomalies**, because a real anomaly here is usually not an
+unprecedented *level*, it is a normal level at an abnormal time. The confirmed
+anomalies reach their current level in a median of 4.5 % of the baseline's hours;
+the items reviewers rejected sit at 3.0 % and 10.8 %, i.e. inside that
+distribution, so no threshold on "has this level been seen" separates them.
+
+What does separate them is a precondition on the baseline's **shape**, which
+never looks at the current level:
+
+```
+suppress  iff  recent_mean > trend_mean                  # upward only
+          and  peak_episodes >= min_episodes             # peaks habitually
+          and  recent_mean <= local_peak                 # level is not new
+```
+
+Measured with the shipped computation, the confirmed anomalies have a median of
+**0** episodes and a maximum of **8** (34 of 36 sit at 0 or 1), while the
+habitual peakers reviewers rejected run **9–72**. At `min_episodes: 9` the veto
+lands entirely on the second group: TP 36 → 36, i.e. no recall cost at all.
+
+Upward excursions only. A collapse is trivially below `local_peak`, so a
+symmetric rule would mute exactly the "the service stopped" signals; a trough
+counterpart would need its own evidence.
+
 **Idle baseline** — a metric that reads zero whenever its resource is idle
 (VMware guest disk latency, outstanding-IO depth, a rarely-used counter) has a
 baseline mean near zero, so *any* activity is a relative change of tens or
@@ -343,7 +395,7 @@ off the scale still fires; the routine idle→busy transitions do not.
 `zero_cnt` and `max_value` are computed by the same daily `GROUP BY` that
 produces `trends_stats` (§1.3), so this costs nothing at detection time.
 
-All four gates **fail open** (`scale = 1.0`) when the evidence is missing — no
+All five gates **fail open** (`scale = 1.0`) when the evidence is missing — no
 baseline stats, no raw history, `trend_std <= 0`, or a `trends_stats` row
 written before `zero_cnt`/`max_value` existed. A real anomaly is never
 suppressed for lack of evidence.
@@ -495,6 +547,11 @@ rows are persisted with `rescued = TRUE`.
 
 This is the one place where clustering feeds back into the anomaly decision.
 
+The idle-baseline and recurring-peak gates are excluded from rescue: they are
+*vetoes* — assertions that the movement is not interesting at all — rather than
+severity scalings, so an item either of them held back is never a candidate no
+matter what its cluster does. Only magnitude is a matter of degree.
+
 ---
 
 ## 4. Persistence
@@ -582,6 +639,9 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `metric_categories.categories[].weight` | per-category | prior importance by metric type |
 | `metric_categories.duration.*` | 600 → 3600 s | suppress brief spikes |
 | `metric_categories.idle_baseline.max_zero_ratio` | 0.8 | baseline zero more often than this → require an unprecedented level (§2.6) |
+| `metric_categories.recurring_peak.min_episodes` | 9 | baseline excursions that make an item a habitual peaker (§2.6); lower to suppress more |
+| `metric_categories.recurring_peak.k_sigma` | 2.0 | sigma multiple a bucket max must clear to open an episode |
+| `metric_categories.recurring_peak.exclude_recent_secs` | 86400 | tail kept out of the precedent (§1.3) |
 | `clustering.corr_eps` | 0.10 | DBSCAN radius on correlation distance |
 | `clustering.raw_corr_min` | 0.99 | gate for the raw-level channel |
 | `clustering.detection_period` | 43200 | seconds of history used for clustering |
@@ -830,3 +890,63 @@ hour; and a detector that abstains does not dilute the ensemble, so
 `sug-cdrmediator02 call.stats` is confirmed by changepoint plus a marginal
 zscore even though the seasonal detector correctly judged the level normal for
 the hour (z = 1.62) and stayed silent.
+
+### 8.8 Levels the item reaches every day (fixed)
+
+The 12 items surviving §8.7 still contained obvious noise. A reviewer picked two
+out — `sug-cdrmediator02 call.stats.calls_total` (a business-hours call counter)
+and a VMware guest CPU — with the same objection: *look at the past peaks, the
+current one is not unusual*. The old implementation had a rule for exactly this
+(`detect3`, §2.6), so the question was why the rewrite dropped it.
+
+It was dropped for a good reason, and porting it back verbatim would have been a
+serious regression. Replayed against the 19 human-labelled queues
+(`datasets/queues/`, 570 labels), the unconditional "level must be unprecedented"
+veto removed **25 of the 36 confirmed anomalies** the pipeline detects — a 69 %
+recall loss — for the sake of 2 false positives. The reason is visible in the
+distribution: the confirmed anomalies reach their current level in a median of
+**4.5 %** of the baseline's hours, and the two rejected items sit at **3.0 %** and
+**10.8 %**, inside that range. In this environment a real anomaly is usually a
+normal level at an abnormal time, not a level never seen before, so no threshold
+on "has this been reached" can separate the two groups.
+
+The rule becomes safe when it is conditioned on a property of the baseline's
+*shape* rather than its levels — how many separate excursions the item makes at
+all (§2.6). That number does separate them cleanly:
+
+| | median | max | 34 of 36 at |
+|---|---|---|---|
+| confirmed anomalies (36) | 0 episodes | 8 | 0 or 1 |
+| habitual peakers reviewers rejected | — | — | 9–72 |
+
+At `min_episodes: 9` the veto lands entirely on the second group. Measured:
+
+| | TP | FP | 15:29 cycle |
+|---|---|---|---|
+| before §8.7 | 48 | 6 | 31 |
+| after §8.7 | 47 | 5 | 12 |
+| **+ recurring-peak gate** | **47** | **5** | **7** |
+
+No movement at all on the labels, and the rejected cycle drops from 12 to 7 —
+the 5 removed being both items the reviewer named plus three more of the same
+kind (`NAS14030 system.cpu.intr` / `.switches`, a second VMware guest CPU).
+
+What survives is the right shape: the five `IPX012` unbound counters, which are
+genuinely above every past sustained peak, and the two `IMTDB123` mssql items,
+whose cache behaviour stepped and which are not habitual peakers at all.
+
+**The trap worth remembering.** The first implementation computed `local_peak`
+over the whole trends window, so an excursion still in progress was part of the
+precedent it was about to be judged against and cleared its own veto — one
+item's reference went 4.4 → 20.1 and the cycle collapsed from 12 to 2, quietly
+suppressing real detections. `exclude_recent_secs` (§1.3) is what closes that,
+and the same cutoff applies to `peak_episodes`, where the live excursion is
+worth a whole extra episode against a threshold of 9.
+
+**Migration:** self-healing, as in §8.7. `local_peak` and `peak_episodes` are
+added with `ADD COLUMN IF NOT EXISTS` and the gate fails open while they are
+NULL, so it starts working per item at the first `anomdec-update-stats` run.
+
+Pinned by `tests/unit/test_changepoint_production_sample.py` (which asserts the
+two named items come back when only this gate is disabled),
+`tests/unit/test_baseline.py`, `test_gating.py` and `test_rolling_stats.py`.

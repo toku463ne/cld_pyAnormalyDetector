@@ -61,6 +61,91 @@ def sample_interval(clocks: pd.Series | None, fallback: int) -> int:
     return max(int(round(float(np.median(gaps)))), 1)
 
 
+def recurring_peak_stats(
+    df: pd.DataFrame,
+    peak_col: str,
+    means: pd.Series,
+    sigmas: pd.Series,
+    window_secs: int,
+    k_sigma: float,
+    max_clock: int | None = None,
+) -> pd.DataFrame:
+    """Per item: how *habitually* it peaks, and how high those peaks sustain.
+
+    Two numbers that together answer "is the level this item is at right now
+    unusual **for this item**":
+
+    `local_peak` — the highest level the metric has ever *sustained*, measured on
+    the same time scale as the detection window: slide `window_secs` over the
+    per-bucket maxima and keep the largest window mean.  Averaging over the
+    window is what stops one freak hour from setting an unreachable ceiling.
+    This is the reference the old implementation's `detect3` compared against
+    (`org/pyAnomalyDetector/data_processing/detector.py::_calc_local_peak`).
+
+    `peak_episodes` — the number of *separate* excursions above
+    `mean + k_sigma·sigma`, counting a contiguous run as one.  Episodes rather
+    than hours, because a single day-long excursion and twenty short spikes are
+    very different things and the hour count cannot tell them apart.
+
+    The episode count is a property of the baseline's shape alone — it does not
+    involve the current level — which is what makes it usable as a precondition
+    (see `features/gating.py::recurring_peak_scale`).
+
+    `max_clock` drops the tail of the window, and is not optional in practice.
+    Both numbers are the *precedent* an excursion is judged against, so an
+    excursion still in progress must not contribute to them: left in, it raises
+    `local_peak` to cover itself (measured on a real export, one item's reference
+    went 4.4 → 20.1 and the item silently cleared its own veto) and adds the
+    episode that can tip a normally-flat item over `min_episodes`.
+    """
+    if df.empty:
+        return pd.DataFrame(columns=["local_peak", "peak_episodes"])
+
+    if max_clock is not None:
+        df = df[df["clock"] < max_clock]
+        if df.empty:
+            return pd.DataFrame(columns=["local_peak", "peak_episodes"])
+
+    ordered = df.sort_values(["itemid", "clock"])
+    window = max(int(window_secs), 1)
+    stamped = ordered.assign(_ts=pd.to_datetime(ordered["clock"], unit="s")).set_index("_ts")
+    rolling = (
+        stamped.groupby("itemid")[peak_col]
+        .rolling(f"{window}s", min_periods=1)
+        .mean()
+        .reset_index(level=0, drop=False)
+    )
+    # Drop the windows at the very start of each series: they cover less than
+    # `window_secs`, so a high first bucket becomes a whole-window "sustained"
+    # level on its own.  That errs toward *suppression*, so it is worth removing.
+    # Keep them only when the series is too short to have a full window at all.
+    elapsed = ordered["clock"].to_numpy() - ordered.groupby("itemid")["clock"].transform("min").to_numpy()
+    full = elapsed >= window
+    rolling = rolling.assign(_full=full)
+    complete = rolling[rolling["_full"]]
+    local_peak = complete.groupby("itemid")[peak_col].max()
+    short = rolling.groupby("itemid")[peak_col].max()
+    local_peak = local_peak.reindex(short.index)
+    local_peak = local_peak.where(local_peak.notna(), short)
+
+    episodes: dict[int, int] = {}
+    for item_id, group in ordered.groupby("itemid"):
+        mean = float(means.get(item_id, 0.0))
+        sigma = float(sigmas.get(item_id, 0.0))
+        if not math.isfinite(sigma) or sigma <= 0:
+            episodes[int(item_id)] = 0
+            continue
+        hot = group[peak_col].to_numpy(dtype=float) >= mean + k_sigma * sigma
+        # A run starts where `hot` is True and the previous sample was not.
+        starts = hot & ~np.concatenate(([False], hot[:-1]))
+        episodes[int(item_id)] = int(starts.sum())
+
+    return pd.DataFrame({
+        "local_peak": local_peak,
+        "peak_episodes": pd.Series(episodes, dtype="int64"),
+    })
+
+
 def intra_std_from_range(
     df: pd.DataFrame,
     range_cols: tuple[str, str],
