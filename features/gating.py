@@ -5,8 +5,9 @@ Pure, DB-free functions that adjust ensemble scores by:
 
   effective_score = raw_score × category_weight × magnitude_scale
                               × duration_scale × idle_scale × recurring_peak_scale
+                              × recency_scale
 
-All five multipliers are in [floor, 1].  The driving quantity for magnitude is
+All six multipliers are in [floor, 1].  The driving quantity for magnitude is
 always the change from baseline Δ = |recent_mean - trend_mean|, never the raw
 current value, so a host running steadily at a high level (Δ≈0) is not flagged.
 
@@ -26,6 +27,7 @@ from config.schema import (
     MagnitudeConfig,
     MetricCategoriesConfig,
     MetricCategoryRule,
+    RecencyConfig,
     RecurringPeakConfig,
 )
 from detectors.base import AnomalyScore
@@ -148,6 +150,29 @@ def recurring_peak_scale(
     return rcfg.floor
 
 
+def recency_scale(
+    onset: int | None,
+    endep: int,
+    max_age_secs: int,
+    rcfg: RecencyConfig,
+) -> float:
+    """Require the excursion to have begun inside the detection window.
+
+    This is what makes a detection mean "something started", rather than "the
+    current level still differs from a baseline that has not caught up yet".
+    Without it the same incident is re-reported every hour for as long as the
+    baseline takes to absorb it — see `RecencyConfig`.
+
+    Fails open when the onset is unknown: absence of evidence about when
+    something began is not evidence that it began long ago.
+    """
+    if not rcfg.enabled:
+        return 1.0
+    if onset is None or max_age_secs <= 0:
+        return 1.0
+    return 1.0 if (endep - int(onset)) <= max_age_secs else rcfg.floor
+
+
 def duration_scale(
     series: pd.Series | None,
     trend_mean: float,
@@ -195,6 +220,9 @@ def apply_gates(
     min_score: float,
     history_df: pd.DataFrame | None = None,
     history_interval: int = 600,
+    onsets: dict[int, int] | None = None,
+    endep: int = 0,
+    recency_max_age: int = 0,
 ) -> list[AnomalyScore]:
     """
     Recompute each score's `score` (= effective score) and `is_anomaly` flag by
@@ -202,9 +230,9 @@ def apply_gates(
     gate and the recurring-peak gate.
 
     The per-detector breakdown (`detector_scores`) is preserved unchanged; the
-    raw ensemble score and the five gate multipliers are recorded in `features`
-    (raw_score, gate_weight, mag_scale, dur_scale, idle_scale, peak_scale, delta)
-    for interpretability.
+    raw ensemble score and the six gate multipliers are recorded in `features`
+    (raw_score, gate_weight, mag_scale, dur_scale, idle_scale, peak_scale,
+    recency_scale, delta) for interpretability.
     """
     h_mean = _series(history_stats, "mean")
     t_mean = _series(trends_stats, "mean")
@@ -215,6 +243,9 @@ def apply_gates(
     t_peak_eps = _series(trends_stats, "peak_episodes")
     t_cnt = _series(trends_stats, "cnt")
     t_max = _series(trends_stats, "max_value")
+
+    # 0 means "the detection window", which only the caller knows.
+    max_age = cfg.recency.max_age_secs or recency_max_age
 
     dur_enabled = cfg.duration.enabled and history_df is not None and not history_df.empty
     hist_by_item: dict[int, pd.Series] = {}
@@ -260,6 +291,10 @@ def apply_gates(
             cfg.idle_baseline,
         )
 
+        recency = recency_scale(
+            (onsets or {}).get(s.item_id), endep, max_age, cfg.recency
+        )
+
         peak = recurring_peak_scale(
             recent,
             tmean,
@@ -268,7 +303,7 @@ def apply_gates(
             cfg.recurring_peak,
         )
 
-        effective = s.score * weight * mag * dur * idle * peak
+        effective = s.score * weight * mag * dur * idle * peak * recency
         result.append(
             AnomalyScore(
                 item_id=s.item_id,
@@ -283,6 +318,7 @@ def apply_gates(
                     "dur_scale": dur,
                     "idle_scale": idle,
                     "peak_scale": peak,
+                    "recency_scale": recency,
                     "delta": delta,
                     "baseline_sigma": sigma,
                     "sample_secs": interval_by_item.get(s.item_id, history_interval),
@@ -292,7 +328,7 @@ def apply_gates(
 
     n_anom = sum(1 for s in result if s.is_anomaly)
     logger.info(
-        "gating: %d scores → %d anomalies after category/magnitude/duration/idle/peak",
+        "gating: %d scores → %d anomalies after category/magnitude/duration/idle/peak/recency",
         len(result),
         n_anom,
     )

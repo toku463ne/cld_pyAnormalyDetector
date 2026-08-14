@@ -78,9 +78,15 @@ def pagedata_by_group(anomalies_df: pd.DataFrame) -> dict[str, list[int]]:
     df = anomalies_df.copy()
     df["clusterid"] = df["clusterid"].fillna(-1).astype(int)
 
+    # Cluster ids are assigned per cycle, so the same number means different
+    # incidents on different `created` values.  Now that the dashboard spans the
+    # whole retention window, the cycle has to be part of the identity.
+    keys = ["group_name", "hostid", "clusterid"]
+    if "created" in df.columns:
+        keys.append("created")
     clustered = (
         df[df["clusterid"] != -1]
-        .groupby(["group_name", "hostid", "clusterid"])["itemid"]
+        .groupby(keys)["itemid"]
         .min()
         .reset_index()[["group_name", "itemid"]]
     )
@@ -111,6 +117,14 @@ def pagedata_by_cluster(
         return {}
     df = anomalies_df.copy()
     df["clusterid"] = df["clusterid"].fillna(-1).astype(int)
+    # Same reason as pagedata_by_group: a cluster is identified by (cycle, id),
+    # so build a page key that carries both while keeping noise as one bucket.
+    if "created" in df.columns:
+        cycles = {c: n for n, c in enumerate(sorted(df["created"].unique()))}
+        df["clusterid"] = [
+            -1 if cid < 0 else cycles[cr] * 1000 + cid
+            for cid, cr in zip(df["clusterid"], df["created"])
+        ]
     df = (
         df.sort_values(["clusterid", "hostid", "itemid"])
         .drop_duplicates(subset=["clusterid", "hostid", "itemid"])

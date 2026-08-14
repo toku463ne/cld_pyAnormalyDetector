@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from config.schema import (
+    RecencyConfig,
     RecurringPeakConfig,
     DurationConfig,
     IdleBaselineConfig,
@@ -12,6 +13,7 @@ from config.schema import (
 )
 from detectors.base import AnomalyScore
 from features.gating import (
+    recency_scale,
     recurring_peak_scale,
     apply_gates,
     category_weight,
@@ -481,3 +483,57 @@ def test_peak_vetoed_items_are_not_rescue_candidates():
     assert magnitude_suppressed([s], min_score=0.7) == []
     s.features["peak_scale"] = 1.0
     assert [x.item_id for x in magnitude_suppressed([s], min_score=0.7)] == [8]
+
+
+# ----------------------------------------------------------------------
+# recency: the excursion must have STARTED in the window (DETECTION.md §8.11)
+# ----------------------------------------------------------------------
+
+NOW = 1_700_000_000
+WINDOW = 3 * 3600
+
+
+def _rec(**kw):
+    return RecencyConfig(**{"enabled": True, **kw})
+
+
+def test_recency_keeps_an_excursion_that_started_in_the_window():
+    assert recency_scale(NOW - 2 * 3600, NOW, WINDOW, _rec()) == 1.0
+
+
+def test_recency_drops_one_that_started_before_it():
+    """The whole point: otherwise the same incident is re-reported every hour
+    until the 14-day baseline absorbs it."""
+    assert recency_scale(NOW - 9 * 3600, NOW, WINDOW, _rec()) == 0.0
+
+
+def test_recency_fails_open_on_an_unresolved_onset():
+    assert recency_scale(None, NOW, WINDOW, _rec()) == 1.0
+
+
+def test_recency_disabled_is_passthrough():
+    assert recency_scale(NOW - 99 * 3600, NOW, WINDOW, RecencyConfig(enabled=False)) == 1.0
+
+
+def test_recency_quantisation_margin_holds_one_incident_together():
+    """Onsets are hourly buckets, so members of one incident can land in
+    adjacent buckets.  At exactly the window width the incident is split."""
+    members = [NOW - int(2.1 * 3600), NOW - int(3.1 * 3600)]
+    exact = [recency_scale(o, NOW, WINDOW, _rec()) for o in members]
+    margin = [recency_scale(o, NOW, WINDOW + 3600, _rec()) for o in members]
+    assert exact == [1.0, 0.0]          # split
+    assert margin == [1.0, 1.0]         # intact
+
+
+def test_apply_gates_records_the_recency_multiplier():
+    cfg = MetricCategoriesConfig(default_weight=1.0, recency=_rec(), categories=[])
+    scores = [AnomalyScore(item_id=9, score=1.0, is_anomaly=True, detector_scores={"zscore": 1.0})]
+    out = apply_gates(
+        scores, {9: "k"},
+        pd.DataFrame({"itemid": [9], "mean": [5.0]}),
+        pd.DataFrame({"itemid": [9], "mean": [1.0], "std": [1.0]}),
+        cfg, min_score=0.5,
+        onsets={9: NOW - 9 * 3600}, endep=NOW, recency_max_age=WINDOW,
+    )
+    assert out[0].features["recency_scale"] == 0.0
+    assert out[0].is_anomaly is False

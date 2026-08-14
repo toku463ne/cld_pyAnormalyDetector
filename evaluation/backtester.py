@@ -41,6 +41,7 @@ from detectors.seasonal import SeasonalDetector
 from detectors.ensemble import EnsembleDetector
 from clustering.dbscan import cluster_anomalies
 from features.gating import apply_gates, category_weight, classify
+from features.onset import compute_onsets
 from features.baseline import baseline_sigma, intra_std_from_range, recurring_peak_stats
 from evaluation.metrics import (
     compute_clustering_metrics,
@@ -186,6 +187,14 @@ def run_offline_eval(
     # --- Category / magnitude / duration gating (identical to the runtime pipeline) ---
     item_keys = {d.item_id: d.key_ for d in src.get_item_details(item_ids)}
     cat_cfg = ds_config.metric_categories
+    # The recency gate needs onsets, exactly as the runtime pipeline resolves them.
+    onsets = compute_onsets(
+        trends_df, trends_stats,
+        level_tol=ds_config.clustering.onset_level_tol,
+        sigma=ds_config.clustering.sigma,
+        tolerance=ds_config.clustering.onset_tolerance,
+        recent_samples=ds_config.clustering.onset_recent_samples,
+    )
     final_scores = apply_gates(
         final_scores,
         item_keys=item_keys,
@@ -195,6 +204,9 @@ def run_offline_eval(
         min_score=ds_config.ensemble.min_score,
         history_df=history_df,
         history_interval=ds_config.history_interval,
+        onsets=onsets,
+        endep=endep,
+        recency_max_age=ds_config.history_retention * ds_config.history_interval + 3600,
     )
 
     # Ground-truth importance (decision-side gates excluded): category_weight × confidence.

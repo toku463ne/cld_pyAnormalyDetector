@@ -102,3 +102,35 @@ def test_dashboard_url_from_web_base_and_api_endpoint():
     assert dashboard_url("http://zbx/zabbix/api_jsonrpc.php", "7") == \
         "http://zbx/zabbix/zabbix.php?action=dashboard.view&dashboardid=7"
     assert dashboard_url("http://zbx/zabbix", None) is None
+
+
+# ----------------------------------------------------------------------
+# Retention: the dashboard spans days, so cluster ids repeat (§8.11)
+# ----------------------------------------------------------------------
+
+def test_group_page_does_not_merge_same_cluster_id_from_different_cycles():
+    """Cluster ids are assigned per cycle, so `0` in Monday's cycle and `0` in
+    Tuesday's are different incidents.  Collapsing them would hide one."""
+    df = pd.DataFrame({
+        "itemid": [11, 12, 21, 22],
+        "created": [1000, 1000, 9000, 9000],
+        "group_name": ["g"] * 4,
+        "hostid": [1, 1, 1, 1],
+        "clusterid": [0, 0, 0, 0],
+    })
+    pages = pagedata_by_group(df)
+    assert sorted(pages["g"]) == [11, 21]     # one representative per cycle
+
+
+def test_cluster_pages_are_per_cycle():
+    df = pd.DataFrame({
+        "itemid": [11, 12, 21, 22],
+        "created": [1000, 1000, 9000, 9000],
+        "group_name": ["g"] * 4,
+        "hostid": [1, 2, 1, 2],
+        "clusterid": [0, 0, 0, 0],
+    })
+    pages = pagedata_by_cluster(df)
+    real = {k: v for k, v in pages.items() if k != "singletons"}
+    assert len(real) == 2, pages
+    assert all(len(v) == 2 for v in real.values())

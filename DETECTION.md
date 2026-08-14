@@ -288,7 +288,7 @@ a 2-of-3 cascade.
 Defaults (`default.yml`): weights zscore 0.3 / changepoint 0.3 / seasonal 0.4,
 `min_score: 0.7`, `require_any: 2`.
 
-### 2.6 Gating — category, magnitude, duration, idle baseline, recurring peak
+### 2.6 Gating — category, magnitude, duration, idle baseline, recurring peak, recency
 
 `features/gating.py`. Pure functions, used identically by the pipeline and the
 backtester so offline evaluation matches runtime.
@@ -296,13 +296,13 @@ backtester so offline evaluation matches runtime.
 ```
 effective_score = raw_ensemble_score × category_weight × magnitude_scale
                                      × duration_scale × idle_scale
-                                     × recurring_peak_scale
+                                     × recurring_peak_scale × recency_scale
 is_anomaly      = effective_score >= ensemble.min_score
 ```
 
-The raw score and all five multipliers are preserved in `features`
+The raw score and all six multipliers are preserved in `features`
 (`raw_score`, `gate_weight`, `mag_scale`, `dur_scale`, `idle_scale`,
-`peak_scale`, `delta`).
+`peak_scale`, `recency_scale`, `delta`).
 
 **Ramp helper** — `ramp(x, lo, hi)`: 0 at/below `lo`, 1 at/above `hi`, linear
 between; degenerates to a hard threshold at `hi` when `hi <= lo`.
@@ -380,6 +380,31 @@ Upward excursions only. A collapse is trivially below `local_peak`, so a
 symmetric rule would mute exactly the "the service stopped" signals; a trough
 counterpart would need its own evidence.
 
+**Recency** — the excursion must have *begun* inside the detection window.
+
+This is what makes a detection mean "something started" rather than "the current
+level still differs from a baseline that has not caught up". Without it the same
+incident is re-reported every hour for as long as it stays detectable: on four
+real cycles only 11 of 93, 9 of 31, 3 of 11 and 0 of 12 flagged items had
+actually started inside the window, and 8 of the 11 items in one cycle had
+already appeared in the previous one (§8.11).
+
+```
+recency = 1.0                     if endep - onset <= max_age_secs
+recency = floor                   otherwise
+```
+
+`max_age_secs: 0` means the detection window **plus one trends interval**. The
+margin is not slack: onsets are hourly buckets, so an excursion that began 2h10m
+ago reads as 3h old, and at exactly the window width that quantisation split a
+single real incident — five `IPX012 unbound` counters fell into the 2.1 h and
+3.1 h buckets and only two were ever recorded. One interval of margin recovers
+all five.
+
+An incident gets roughly three chances, since three consecutive hourly runs
+still cover its onset. Onsets are resolved once per cycle and shared with
+clustering (§3.3).
+
 **Idle baseline** — a metric that reads zero whenever its resource is idle
 (VMware guest disk latency, outstanding-IO depth, a rarely-used counter) has a
 baseline mean near zero, so *any* activity is a relative change of tens or
@@ -395,7 +420,7 @@ off the scale still fires; the routine idle→busy transitions do not.
 `zero_cnt` and `max_value` are computed by the same daily `GROUP BY` that
 produces `trends_stats` (§1.3), so this costs nothing at detection time.
 
-All five gates **fail open** (`scale = 1.0`) when the evidence is missing — no
+All six gates **fail open** (`scale = 1.0`) when the evidence is missing — no
 baseline stats, no raw history, `trend_std <= 0`, or a `trends_stats` row
 written before `zero_cnt`/`max_value` existed. A real anomaly is never
 suppressed for lack of evidence.
@@ -590,6 +615,11 @@ matter what its cluster does. Only magnitude is a matter of degree.
 
 ## 4. Persistence
 
+An incident is recorded **once, when it starts**, and then kept for
+`anomaly_keep_secs` (default 3 days). Before writing, items already recorded
+inside that window are skipped — without the dedup the recency gate would still
+write the same incident on each of the ~3 cycles that cover its onset.
+
 Anomalies are written to `{ds}_anomalies` with the ensemble score, the
 per-detector breakdown as JSONB, and `rescued`. Cluster ids are assigned in a
 second pass (`update_cluster_ids`), scoped to the cycle being written — without
@@ -673,6 +703,8 @@ overridden there: `batch_size`, `history_interval`, `history_retention`,
 | `metric_categories.categories[].weight` | per-category | prior importance by metric type |
 | `metric_categories.duration.*` | 600 → 3600 s | suppress brief spikes |
 | `metric_categories.idle_baseline.max_zero_ratio` | 0.8 | baseline zero more often than this → require an unprecedented level (§2.6) |
+| `metric_categories.recency.max_age_secs` | 0 | how old an onset may be (§2.6); 0 = window + one trends interval |
+| `anomaly_keep_secs` | 259200 | how long a recorded incident stays in the DB and on the dashboard |
 | `metric_categories.recurring_peak.min_episodes` | 9 | baseline excursions that make an item a habitual peaker (§2.6); lower to suppress more |
 | `metric_categories.recurring_peak.k_sigma` | 2.0 | sigma multiple a bucket max must clear to open an episode |
 | `metric_categories.recurring_peak.exclude_recent_secs` | 86400 | tail kept out of the precedent (§1.3) |
@@ -1104,3 +1136,62 @@ back to the original DBSCAN's true-pair count with the false merges still gone.
 Pinned by `tests/unit/test_clustering_production_sample.py` — which asserts both
 that the unrelated item leaves and that the genuine same-host groups survive —
 and the grid cases in `tests/unit/test_clustering.py`.
+
+### 8.11 Detections were re-issued every hour instead of once (fixed)
+
+Stated design: the job runs hourly over the last three hours of history and
+reports **anomalies that started in that window**; each one is recorded once and
+then kept in the DB and on the dashboard for a few days.
+
+The implementation did none of those three things, and two of the deviations hid
+the third.
+
+**1. Detection was not about starting.** The detectors compare the recent
+window's *mean* against the 14-day baseline, a condition an excursion keeps
+satisfying every hour until the sliding baseline absorbs it (§8.1) — up to
+`trends_retention` days. Onsets of what was actually being flagged:
+
+| cycle | flagged | onset inside the 3 h window |
+|---|---|---|
+| 10:46 | 93 | 11 |
+| 15:29 | 31 | 9 |
+| 17:09 | 11 | 3 |
+| 19:17 | 12 | **0** |
+
+At 17:09, **8 of the 11 items had already been reported at 15:29**; the three
+`IMTDB123` mssql counters appear in all four cycles across nine hours. This is
+the dominant redundancy in the product, and clustering — which runs inside a
+single cycle — cannot touch any of it.
+
+**2. Retention was one day**, not the intended few.
+
+**3. The dashboard showed only the newest cycle.** `publish_dashboard` filtered
+to `created == max(created)`, so nothing that retention kept was ever displayed.
+
+Deviations 1 and 3 cancelled: because detection re-fired hourly, showing only
+the newest cycle happened to show everything ongoing. Fixing either alone breaks
+the product — with 1 fixed and 3 not, an incident would appear for exactly one
+hour and vanish.
+
+**Fixes:** the recency gate (§2.6); dedup against the retention window before
+persisting (§4); `anomaly_keep_secs` 1 day → 3 days; and the dashboard renders
+the whole retained set. Cluster ids are assigned per cycle, so the dashboard's
+collapse keys now include `created` — otherwise cluster `0` from Monday and
+cluster `0` from Tuesday would be folded together.
+
+**Why the backtester's recall collapses (0.120 → 0.013) and why that number is
+not the regression it looks like.** The backtester scores one cycle against
+every labelled anomaly, i.e. it assumes an anomaly should be detected in *every*
+cycle — precisely the behaviour being removed. Under detect-once each incident
+is caught in the cycle its onset falls in and lives in the retained set
+afterwards, which the harness has no notion of. Precision goes to **1.000** on
+that same run, which is the part of the signal that remains meaningful.
+Evaluating this properly needs a multi-cycle replay; `tests/` pins the gate's
+behaviour, and the four-cycle replay used to size `max_age_secs` is described
+above.
+
+**Known limitation of that sizing.** The four exports available are 4.7 h, 2 h
+and 2 h apart rather than hourly, so the replay under-samples what production
+sees and understates the design. The quantisation argument for the one-interval
+margin does not depend on the sampling, but the miss rate observed in the replay
+is pessimistic.

@@ -27,12 +27,6 @@ from tools._zabbix import ZabbixAPI
 logger = logging.getLogger(__name__)
 
 
-def _latest_cycle(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty or "created" not in df:
-        return df
-    return df[df["created"] == df["created"].max()]
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish detection results to a Zabbix dashboard")
     parser.add_argument("-c", "--config", help="Config YAML file")
@@ -48,7 +42,12 @@ def main() -> int:
         if not dcfg.enabled:
             continue
         any_enabled = True
-        df = _latest_cycle(AnomaliesStore(ds_name, db).get())
+        # Everything still inside the retention window, not just this hour's
+        # cycle: an incident is detected once, when it starts, and then stays on
+        # the dashboard for `anomaly_keep_secs`.  Filtering to the newest cycle
+        # made the retention invisible and only looked right because detection
+        # used to re-fire every hour (DETECTION.md §8.11).
+        df = AnomaliesStore(ds_name, db).get()
         group_pd = pagedata_by_group(df)
         cluster_pd = pagedata_by_cluster(df)
         if not group_pd and not cluster_pd:

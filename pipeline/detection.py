@@ -156,10 +156,15 @@ class DetectionPipeline:
         ensemble = EnsembleDetector(ds_cfg.detectors, ds_cfg.ensemble)
         final_scores = ensemble.combine(scores_per_detector)
 
-        # --- Step 5a: category / magnitude / duration gating ---
+        # --- Step 5a: onsets, then category / magnitude / duration gating ---
+        # Onsets are needed by the recency gate (is this a *new* excursion?) as
+        # well as by clustering, so resolve them once for the scored items.
+        onsets = self._compute_onsets(
+            src, ds_cfg, trends_stats, [s.item_id for s in final_scores], endep
+        )
         final_scores = self._apply_gating(
             src, hist_store, ds_cfg, final_scores, history_stats, trends_stats,
-            candidate_history_df, endep,
+            candidate_history_df, endep, onsets,
         )
 
         # --- Step 5b: apply anomaly_filters ---
@@ -182,7 +187,9 @@ class DetectionPipeline:
         # Cluster the union so a suppressed candidate can be matched to a confirmed
         # incident; rescue any candidate sharing a cluster with a confirmed item.
         union_ids = confirmed_ids + [c.item_id for c in candidates]
-        clusters = self._cluster(src, hist_store, trends_stats, ds_cfg, union_ids, endep)
+        clusters = self._cluster(
+            src, hist_store, trends_stats, ds_cfg, union_ids, endep, onsets
+        )
 
         rescued = select_rescued(candidates, clusters, confirmed_ids)
         for s in rescued:
@@ -194,7 +201,23 @@ class DetectionPipeline:
             )
 
         all_anomalies = anomaly_scores + rescued
+
+        # An incident is recorded once and kept for `anomaly_keep_secs`; without
+        # this the same one is written every hour for as long as it is detectable
+        # (8 of 11 items in one real cycle were already in the previous one).
+        already = set(anomaly_store.get_item_ids(since_ep=endep - ds_cfg.anomaly_keep_secs))
+        if already:
+            fresh = [s for s in all_anomalies if s.item_id not in already]
+            if len(fresh) != len(all_anomalies):
+                logger.info(
+                    "[%s] %d anomaly/ies already recorded within the retention window; not re-writing",
+                    ds_name, len(all_anomalies) - len(fresh),
+                )
+            all_anomalies = fresh
         all_ids = [s.item_id for s in all_anomalies]
+        if not all_anomalies:
+            anomaly_store.delete_before(endep - ds_cfg.anomaly_keep_secs)
+            return []
 
         # --- Step 7: persist + assign cluster ids ---
         self._write_anomalies(
@@ -294,6 +317,7 @@ class DetectionPipeline:
         trends_stats: pd.DataFrame,
         candidate_history_df: pd.DataFrame,
         endep: int,
+        onsets: dict[int, int] | None = None,
     ) -> list[AnomalyScore]:
         """Apply category weight + magnitude + duration gating to ensemble scores.
 
@@ -341,6 +365,11 @@ class DetectionPipeline:
             min_score=ds_cfg.ensemble.min_score,
             history_df=history_df,
             history_interval=ds_cfg.history_interval,
+            onsets=onsets,
+            endep=endep,
+            # + one trends interval: onsets are hourly buckets, so an excursion
+            # that began 2h10m ago reads as 3h old (see RecencyConfig).
+            recency_max_age=ds_cfg.history_retention * ds_cfg.history_interval + 3600,
         )
 
     def _write_anomalies(
@@ -389,6 +418,7 @@ class DetectionPipeline:
         ds_cfg: DataSourceConfig,
         item_ids: list[int],
         endep: int,
+        onsets: dict[int, int] | None = None,
     ) -> dict[int, int]:
         """Cluster the given items, returning {item_id -> cluster_id} (-1 = noise).
 
@@ -424,7 +454,8 @@ class DetectionPipeline:
             d.item_id: (d.key_ or d.item_name)
             for d in src.get_item_details(item_ids)
         }
-        onsets = self._compute_onsets(src, ds_cfg, trends_stats, item_ids, endep)
+        if onsets is None:
+            onsets = self._compute_onsets(src, ds_cfg, trends_stats, item_ids, endep)
         return cluster_anomalies(
             history_df, trends_stats, item_ids, ds_cfg.clustering,
             item_keys=item_keys, onsets=onsets,

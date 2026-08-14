@@ -240,6 +240,38 @@ class RecurringPeakConfig(BaseModel):
     floor: float = 0.0           # scale applied when suppressed (0 = hard veto)
 
 
+class RecencyConfig(BaseModel):
+    """Require the excursion to have *started* recently.
+
+    The job runs hourly over the last `history_retention x history_interval` of
+    history, and the product it is meant to deliver is "anomalies that began in
+    that window", recorded once and then kept on the dashboard for a few days.
+
+    Without this the detectors deliver something else: they compare the recent
+    window's mean against the 14-day baseline, which an excursion keeps
+    satisfying every hour until the baseline slides past it.  Measured on four
+    real cycles, only 11 of 93, 9 of 31, 3 of 11 and 0 of 12 flagged items had
+    actually started inside the window; the rest were the same incidents being
+    re-reported, 8 of the 11 items in one cycle having already appeared in the
+    previous one.
+
+    `max_age_secs = 0` follows the detection window **plus one trends interval**.
+    The margin is not slack: onsets come from trends, so they are quantised to
+    the hour, and an excursion that began 2h10m ago is recorded as 3h old.  At
+    exactly the window width that quantisation split a single real incident --
+    five `IPX012 unbound` counters landed in the 2.1h and 3.1h buckets, and only
+    two of the five were ever recorded.  One interval of margin recovers all
+    five.
+
+    An incident gets roughly three chances to be caught, since three consecutive
+    hourly runs still have its onset inside the window.  An item whose onset
+    cannot be resolved is kept (fail-open, like every other gate).
+    """
+    enabled: bool = False
+    max_age_secs: int = 0     # 0 = history_retention x history_interval
+    floor: float = 0.0
+
+
 class MetricCategoryRule(BaseModel):
     """A metric category, matched by fnmatch glob(s) on items.key_ (== item_name
     for CSV sources).  First matching category wins."""
@@ -254,6 +286,7 @@ class MetricCategoriesConfig(BaseModel):
     duration: DurationConfig = DurationConfig()
     idle_baseline: IdleBaselineConfig = IdleBaselineConfig()
     recurring_peak: RecurringPeakConfig = RecurringPeakConfig()
+    recency: RecencyConfig = RecencyConfig()
     categories: list[MetricCategoryRule] = []
 
 
@@ -345,7 +378,7 @@ class DataSourceConfig(BaseModel):
     # at 12, 4.64 at 60.  4.0 is a mid-range compromise -- raise it to detect
     # more, lower it to suppress more.
     trends_range_to_sigma: float = 4.0
-    anomaly_keep_secs: int = 86400
+    anomaly_keep_secs: int = 259200
     staleness_secs: int = 3600
 
     detectors: DetectorsConfig = DetectorsConfig()
@@ -418,7 +451,7 @@ class AppConfig(BaseModel):
     # at 12, 4.64 at 60.  4.0 is a mid-range compromise -- raise it to detect
     # more, lower it to suppress more.
     trends_range_to_sigma: float = 4.0
-    anomaly_keep_secs: int = 86400
+    anomaly_keep_secs: int = 259200
     staleness_secs: int = 3600
     detectors: DetectorsConfig = DetectorsConfig()
     ensemble: EnsembleConfig = EnsembleConfig()

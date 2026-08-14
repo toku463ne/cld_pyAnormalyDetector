@@ -52,7 +52,11 @@ trends_retention: 14         # days of trends to retain for stats
 # 12, 4.64 at 60.  4.0 is a mid-range compromise — raise it to suppress more,
 # lower it to detect more.
 trends_range_to_sigma: 4.0
-anomaly_keep_secs: 86400     # keep anomalies for 1 day
+# An incident is detected once, when it starts (metric_categories.recency), and
+# then stays in the DB and on the dashboard for this long.  1 day was right when
+# detection re-fired every hour; with detect-once it is the whole shelf life of a
+# finding.
+anomaly_keep_secs: 259200    # 3 days
 # An item whose newest history sample is older than this has stopped reporting;
 # its window stats no longer describe anything, so scoring it just produces a
 # saturated score every hour.  Skip it instead.  0 disables the check.
@@ -167,6 +171,29 @@ metric_categories:
     # idle→busy transitions do not.
     enabled: true
     max_zero_ratio: 0.8
+    floor: 0.0
+  recency:
+    # The job runs hourly over the last history_retention x history_interval of
+    # history, and the product it delivers is "anomalies that STARTED in that
+    # window" -- recorded once and then kept for anomaly_keep_secs.
+    #
+    # Without this the detectors deliver something else: they compare the recent
+    # window's mean against the 14-day baseline, which an excursion keeps
+    # satisfying every hour until the baseline slides past it.  On four real
+    # cycles only 11 of 93, 9 of 31, 3 of 11 and 0 of 12 flagged items had
+    # actually started inside the window; 8 of the 11 in one cycle had already
+    # been reported in the previous one.
+    #
+    # max_age_secs 0 = the detection window PLUS one trends interval.  That
+    # margin is not slack: onsets are hourly buckets, so something that began
+    # 2h10m ago reads as 3h old.  At exactly the window width that quantisation
+    # split one real incident -- five IPX012 unbound counters fell in the 2.1h
+    # and 3.1h buckets and only two were ever recorded; one interval of margin
+    # recovers all five.
+    # An incident gets ~3 chances to be caught, since three consecutive hourly
+    # runs still cover its onset.  Unresolvable onset = kept (fail-open).
+    enabled: true
+    max_age_secs: 0
     floor: 0.0
   recurring_peak:
     # Some metrics peak as a matter of course — a call counter that climbs every
